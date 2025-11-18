@@ -1,0 +1,40 @@
+# Git Ignore File
+# Dependencies
+node_modules/
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+pip-log.txt
+
+# Testing
+coverage/
+.pytest_cache/
+htmlcov/
+
+# Docker
+.dockerignore

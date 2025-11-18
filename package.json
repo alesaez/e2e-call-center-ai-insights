@@ -1,0 +1,27 @@
+{
+  "name": "call-center-ai-insights",
+  "version": "1.0.0",
+  "description": "Call Center AI Insights with Microsoft Entra ID SSO",
+  "private": true,
+  "scripts": {
+    "dev:frontend": "cd frontend && npm run dev",
+    "dev:backend": "cd backend && python main.py",
+    "install:frontend": "cd frontend && npm install",
+    "install:backend": "cd backend && pip install -r requirements.txt",
+    "build:frontend": "cd frontend && npm run build",
+    "docker:build:frontend": "docker build -t callcenterai-frontend:latest ./frontend",
+    "docker:build:backend": "docker build -t callcenterai-backend:latest ./backend",
+    "docker:build": "npm run docker:build:frontend && npm run docker:build:backend"
+  },
+  "keywords": [
+    "sso",
+    "microsoft-entra-id",
+    "azure-ad",
+    "react",
+    "fastapi",
+    "oauth2",
+    "oidc"
+  ],
+  "author": "",
+  "license": "MIT"
+}
