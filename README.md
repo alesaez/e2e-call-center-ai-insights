@@ -70,7 +70,8 @@ A comprehensive React + Python (FastAPI) web application with Microsoft Entra ID
 ### 1. Clone the Repository
 
 ```bash
-cd c:\Users\algut\repos\alesaez\e2e-call-center-ai-insights
+git clone https://github.com/alesaez/e2e-call-center-ai-insights.git
+cd e2e-call-center-ai-insights
 ```
 
 ### 2. Setup Azure Entra ID

@@ -109,14 +109,14 @@
 **Steps:**
 ```powershell
 # 1. Start the backend
-cd c:\Users\algut\repos\alesaez\e2e-call-center-ai-insights\backend
+cd .\e2e-call-center-ai-insights\backend
 python -m venv venv
 .\venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 uvicorn main:app --reload
 
 # 2. In a new terminal, start the frontend
-cd c:\Users\algut\repos\alesaez\e2e-call-center-ai-insights\frontend
+cd .\e2e-call-center-ai-insights\frontend
 npm run dev
 ```
 

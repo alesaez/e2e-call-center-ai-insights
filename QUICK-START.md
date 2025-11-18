@@ -28,7 +28,7 @@
 Open a PowerShell terminal:
 
 ```powershell
-cd c:\Users\algut\repos\alesaez\e2e-call-center-ai-insights\backend
+cd .\e2e-call-center-ai-insights\backend
 
 # Activate virtual environment
 .\venv\Scripts\Activate.ps1
@@ -48,7 +48,7 @@ INFO:     Application startup complete.
 Open a **NEW** PowerShell terminal:
 
 ```powershell
-cd c:\Users\algut\repos\alesaez\e2e-call-center-ai-insights\frontend
+cd .\e2e-call-center-ai-insights\frontend
 
 # Start the dev server
 npm run dev
