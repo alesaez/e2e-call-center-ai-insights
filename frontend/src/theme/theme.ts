@@ -15,7 +15,7 @@ export const defaultTenantConfig: TenantConfig = {
   tenantId: 'default',
   name: 'Call Center AI Insights',
   primaryColor: '#0078d4', // Microsoft blue
-  secondaryColor: '#2b88d8',
+  secondaryColor: '#2b88d8', // Lighter blue
 };
 
 // Create Material-UI theme based on tenant configuration
@@ -77,7 +77,7 @@ export const createAppTheme = (tenantConfig: TenantConfig = defaultTenantConfig)
 
 // Mock function to fetch tenant configuration
 // In production, this would fetch from your backend API
-export const getTenantConfig = async (tenantId?: string): Promise<TenantConfig> => {
+export const getTenantConfig = async (_tenantId?: string): Promise<TenantConfig> => {
   // Simulate API call
   await new Promise(resolve => setTimeout(resolve, 100));
   

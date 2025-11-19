@@ -12,17 +12,22 @@ import {
   Avatar,
   Chip,
   Stack,
-  Link,
+  IconButton,
+  Tooltip,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import {
   Send as SendIcon,
   SmartToy as BotIcon,
   Person as PersonIcon,
+  QuestionMark as QuestionIcon,
 } from '@mui/icons-material';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import apiClient from '../services/apiClient';
+import QuestionCards from './QuestionCards';
+import ReferenceProcessor from './ReferenceProcessor';
+import { predefinedQuestions } from '../config/chatQuestions';
 
 interface CopilotStudioSession {
   conversationId: string;
@@ -50,24 +55,51 @@ const MarkdownMessage = ({ text, isUser }: { text: string; isUser: boolean }) =>
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
       components={{
-        // Custom link styling
+        // Custom link styling - small clickable bubbles
         a: ({ ...props }) => (
-          <Link
+          <Box
+            component="a"
             href={props.href}
             target="_blank"
             rel="noopener noreferrer"
             sx={{
-              color: isUser ? 'inherit' : theme.palette.primary.main,
-              textDecoration: 'underline',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: 0.5,
+              px: 1,
+              py: 0.25,
+              mx: 0.25,
+              backgroundColor: isUser 
+                ? 'rgba(255,255,255,0.2)' 
+                : theme.palette.primary.main,
+              color: isUser 
+                ? theme.palette.primary.contrastText 
+                : theme.palette.primary.contrastText,
+              borderRadius: 2,
+              fontSize: '0.8em',
+              fontWeight: 500,
+              textDecoration: 'none',
+              cursor: 'pointer',
+              transition: 'all 0.2s ease-in-out',
               '&:hover': {
-                opacity: 0.8,
+                backgroundColor: isUser 
+                  ? 'rgba(255,255,255,0.3)' 
+                  : theme.palette.primary.dark,
+                transform: 'translateY(-1px)',
+                boxShadow: theme.shadows[2],
+              },
+              '&:active': {
+                transform: 'translateY(0)',
               },
             }}
           >
+            <Box component="span" sx={{ fontSize: '0.7em' }}>
+              🔗
+            </Box>
             {props.children}
-          </Link>
+          </Box>
         ),
-        // Custom paragraph styling
+        // Custom paragraph styling with reference processing
         p: ({ ...props }) => (
           <Box
             sx={{
@@ -76,9 +108,9 @@ const MarkdownMessage = ({ text, isUser }: { text: string; isUser: boolean }) =>
               '&:last-child': { mb: 0 },
             }}
           >
-            <Typography variant="body2" component="span">
+            <ReferenceProcessor isUser={isUser}>
               {props.children}
-            </Typography>
+            </ReferenceProcessor>
           </Box>
         ),
         // Custom list styling
@@ -192,6 +224,7 @@ export default function ChatbotPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
+  const [showQuestions, setShowQuestions] = useState(true);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -239,12 +272,13 @@ export default function ChatbotPage() {
     initializeSession();
   }, []);
 
-  const sendMessage = async () => {
-    if (!inputText.trim() || sending || !session) return;
+  const sendMessage = async (messageText?: string) => {
+    const textToSend = messageText || inputText.trim();
+    if (!textToSend || sending || !session) return;
 
     const userMessage: Message = {
       id: Date.now().toString(),
-      text: inputText.trim(),
+      text: textToSend,
       sender: 'user',
       timestamp: new Date(),
     };
@@ -252,13 +286,14 @@ export default function ChatbotPage() {
     setMessages(prev => [...prev, userMessage]);
     setInputText('');
     setSending(true);
+    setShowQuestions(false); // Hide questions after first message
 
     try {
       // Send message to Copilot Studio via backend
       const response = await apiClient.post('/api/copilot-studio/send-message', {
         conversationId: session.conversationId,
         userId: session.userId,
-        text: userMessage.text,
+        text: textToSend,
       });
 
       const botResponse: Message = {
@@ -289,6 +324,10 @@ export default function ChatbotPage() {
       event.preventDefault();
       sendMessage();
     }
+  };
+
+  const handleQuestionSelect = (question: string) => {
+    sendMessage(question);
   };
 
   return (
@@ -444,9 +483,35 @@ export default function ChatbotPage() {
               </List>
             </Box>
 
+            {/* Quick Questions - positioned above message input */}
+            {(messages.length <= 1 || showQuestions) && (
+              <Box sx={{ px: 2, pb: 1 }}>
+                <QuestionCards
+                  questions={predefinedQuestions}
+                  onQuestionSelect={handleQuestionSelect}
+                  disabled={sending}
+                />
+              </Box>
+            )}
+
             {/* Message Input */}
             <Box sx={{ p: 2, borderTop: 1, borderColor: 'divider' }}>
               <Stack direction="row" spacing={1}>
+                {messages.length > 1 && (
+                  <Tooltip title={showQuestions ? "Hide quick questions" : "Show quick questions"}>
+                    <IconButton
+                      onClick={() => setShowQuestions(!showQuestions)}
+                      disabled={sending}
+                      sx={{ 
+                        color: showQuestions ? 'primary.main' : 'action.active',
+                        alignSelf: 'flex-end',
+                        mb: 0.5,
+                      }}
+                    >
+                      <QuestionIcon />
+                    </IconButton>
+                  </Tooltip>
+                )}
                 <TextField
                   fullWidth
                   multiline
@@ -459,7 +524,7 @@ export default function ChatbotPage() {
                 />
                 <Button
                   variant="contained"
-                  onClick={sendMessage}
+                  onClick={() => sendMessage()}
                   disabled={!inputText.trim() || sending}
                   sx={{ minWidth: 60 }}
                 >
