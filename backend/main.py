@@ -334,7 +334,7 @@ async def get_copilot_studio_token(
         async for action in act:
             if action.text:
                 welcomeMessage = action.text
-            logger.info(action)
+                
         conversation_id = action.conversation.id
                 
         # The conversation is started when we send the first message
