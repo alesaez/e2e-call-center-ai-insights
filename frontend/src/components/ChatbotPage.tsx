@@ -38,6 +38,7 @@ interface CopilotStudioSession {
   endpoint: string;
   expiresIn: number;
   sessionCreated: boolean;
+  welcomeMessage: string;
 }
 
 interface Message {
@@ -247,7 +248,8 @@ export default function ChatbotPage() {
         // Add welcome message
         const welcomeMessage: Message = {
           id: 'welcome',
-          text: `Hello! I'm your AI assistant. I can help you with call center insights, agent performance, and more. What would you like to know?`,
+          // If welcomeMessage is empty use default welcome message
+          text: sessionData.welcomeMessage || `Hello! I'm your AI assistant. How can I help you today?`,
           sender: 'bot',
           timestamp: new Date(),
         };

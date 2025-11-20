@@ -328,10 +328,15 @@ async def get_copilot_studio_token(
             # Create client instance with connection settings and token
             client = CopilotClient(connection_settings, token_result["access_token"])
         
-        # Generate conversation ID
-        conversation_id = str(uuid.uuid4())
+        # Start conversation - returns an async generator
+        act = client.start_conversation(True)
         
-        # Start conversation - returns an async generator, don't await it
+        async for action in act:
+            if action.text:
+                welcomeMessage = action.text
+            logger.info(action)
+        conversation_id = action.conversation.id
+                
         # The conversation is started when we send the first message
         logger.info(f"Copilot Studio session initialized with conversation_id: {conversation_id}")
         
@@ -343,7 +348,8 @@ async def get_copilot_studio_token(
             "schemaName": schema_name,
             "endpoint": f"https://{environment_id}.api.powerplatform.com/v1.0/bots/{schema_name}",
             "expiresIn": 3600,  # 1 hour
-            "sessionCreated": True
+            "sessionCreated": True,
+            "welcomeMessage": welcomeMessage
         }
         
     except Exception as e:
