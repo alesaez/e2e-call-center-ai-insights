@@ -10,7 +10,10 @@ A comprehensive React + Python (FastAPI) web application with Microsoft Entra ID
 - 📊 **Interactive Dashboard** with KPIs and charts (Material-UI + Recharts)
 - 🤖 **CS Chatbot** integration with Microsoft Copilot Studio (On-Behalf-Of flow)
 - 💬 **Real-time Chat** with auto-scroll and clickable links
-- 🔒 **Secure API Endpoints** with Bearer token authentication
+- � **Chat History** with Azure Cosmos DB persistence and two-container architecture
+- 🔍 **Conversation Management** with search, delete, and session tracking
+- 🛡️ **Error Resilience** with comprehensive error boundaries and graceful degradation
+- �🔒 **Secure API Endpoints** with Bearer token authentication
 - 🔄 **Automatic Token Refresh** with silent authentication
 - 🎨 **White-labeling Support** with theme customization
 - 📦 **Docker Support** for containerization
@@ -46,6 +49,8 @@ A comprehensive React + Python (FastAPI) web application with Microsoft Entra ID
 │   ├── main.py             # Main FastAPI application with Copilot Studio integration
 │   ├── config.py           # Configuration management (Pydantic settings)
 │   ├── models.py           # Data models
+│   ├── chat_models.py      # Chat history and conversation models
+│   ├── cosmos_service.py   # Azure Cosmos DB service layer
 │   ├── Dockerfile          # Backend Docker configuration
 │   ├── requirements.txt    # Python dependencies
 │   └── .env.example        # Environment variables template
@@ -137,6 +142,15 @@ Open `http://localhost:3000` in your browser.
 - `POST /api/copilot-studio/session` - Create Copilot Studio chat session
 - `POST /api/copilot-studio/send-message` - Send message to CS Chatbot
 
+### Chat History Endpoints
+
+- `GET /api/chat/conversations` - Get user's conversation history
+- `POST /api/chat/conversations` - Create new conversation
+- `GET /api/chat/conversations/{id}` - Get specific conversation with messages
+- `GET /api/chat/conversations/{id}/messages` - Get messages for conversation
+- `POST /api/chat/conversations/{id}/messages` - Add message to conversation
+- `DELETE /api/chat/conversations/{id}` - Delete conversation
+
 ## Authentication Flow
 
 1. User navigates to application
@@ -185,6 +199,8 @@ az containerapp create --name callcenterai-frontend ...
 - **Pydantic** - Data validation and settings management
 - **MSAL** - Microsoft Authentication Library (On-Behalf-Of flow)
 - **microsoft-agents-copilotstudio-client** - Copilot Studio integration
+- **Azure Cosmos DB SDK** - Chat history persistence with two-container architecture
+- **Azure Identity** - DefaultAzureCredential for secure authentication
 - **Uvicorn** - ASGI server
 - **HTTPX** - Async HTTP client
 
@@ -258,6 +274,13 @@ COPILOT_STUDIO_SCHEMA_NAME=your-agent-schema-name
 COPILOT_STUDIO_TENANT_ID=your-tenant-id
 COPILOT_STUDIO_APP_CLIENT_ID=your-backend-client-id
 COPILOT_STUDIO_APP_CLIENT_SECRET=your-client-secret
+
+# Optional: Azure Cosmos DB Configuration (for Chat History)
+COSMOS_DB_ACCOUNT_URI=https://your-account.documents.azure.com:443/
+COSMOS_DB_CONNECTION_STRING=AccountEndpoint=...;AccountKey=...;
+COSMOS_DB_DATABASE_NAME=CallCenterAI
+COSMOS_DB_SESSIONS_CONTAINER=Sessions
+COSMOS_DB_MESSAGES_CONTAINER=Messages
 ```
 
 ## Troubleshooting

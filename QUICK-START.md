@@ -71,11 +71,37 @@ VITE v5.x.x  ready in xxx ms
 ➜  Local:   http://localhost:3000/
 ```
 
-## Step 4: Configure Chat History (Optional - 5 minutes)
+## Step 4: Configure Chat History (Optional - 10 minutes)
 
-**Note:** Chat history requires Azure Cosmos DB. Skip this step if you don't need chat persistence.
+**Note:** Chat history requires Azure Cosmos DB with a **two-container architecture**. Skip this step if you don't need chat persistence.
 
-### 4.1 Fix Cosmos DB Firewall (if needed)
+### 4.1 Create Cosmos DB Account and Containers
+
+If you don't have a Cosmos DB account yet:
+
+1. Open [Azure Portal](https://portal.azure.com)
+2. Create a new **Azure Cosmos DB** resource (SQL API)
+3. Create a database named `CallCenterAI`
+4. Create two containers:
+   - **Sessions** container with partition key: `/userId`
+   - **Messages** container with partition key: `/sessionId`
+
+### 4.2 Configure Backend Environment
+
+Update your `backend/.env` file:
+
+```env
+# Add these Cosmos DB settings
+COSMOS_DB_ACCOUNT_URI=https://your-account.documents.azure.com:443/
+COSMOS_DB_DATABASE_NAME=CallCenterAI
+COSMOS_DB_SESSIONS_CONTAINER=Sessions
+COSMOS_DB_MESSAGES_CONTAINER=Messages
+
+# Optional: Use connection string instead of DefaultAzureCredential
+# COSMOS_DB_CONNECTION_STRING=AccountEndpoint=...;AccountKey=...;
+```
+
+### 4.3 Fix Cosmos DB Firewall (if needed)
 If you see Cosmos DB firewall errors in the backend terminal:
 
 1. Open [Azure Portal](https://portal.azure.com)
@@ -86,7 +112,7 @@ If you see Cosmos DB firewall errors in the backend terminal:
    - Add your current IP address
    - Click **Save**
 
-### 4.2 Configure Authentication
+### 4.4 Configure Authentication
 The backend automatically uses **DefaultAzureCredential** for localhost:
 
 ```powershell
@@ -100,8 +126,17 @@ az account show
 ✅ **Verification:** Backend should show:
 ```
 INFO:cosmos_service:Using DefaultAzureCredential for Cosmos DB authentication (localhost)
-INFO:cosmos_service:Cosmos DB initialized: ContosoSuites/ChatHistory
+INFO:cosmos_service:Cosmos DB initialized: CallCenterAI with containers Sessions, Messages
+INFO:cosmos_service:Sessions container ready (partition: /userId)
+INFO:cosmos_service:Messages container ready (partition: /sessionId)
 ```
+
+### 4.5 Architecture Benefits
+The new two-container design provides:
+- **Better Performance**: Each container optimized for specific queries
+- **Cost Efficiency**: Reduced cross-partition queries save RUs
+- **Scalability**: Independent scaling per container
+- **Future-Ready**: Supports advanced features like vector search
 
 ## Step 5: Test the Application (5 minutes)
 

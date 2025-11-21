@@ -20,6 +20,12 @@ param(
     [Parameter(Mandatory=$true)]
     [string]$EntraTenantId = "211cfba1-9b0f-46aa-9e2d-478ed07f984e",
     
+    # Optional: Cosmos DB for Chat History (if not provided, chat history will be disabled)
+    [string]$CosmosDbAccountName = "",
+    [string]$CosmosDbDatabaseName = "CallCenterAI",
+    [string]$CosmosDbSessionsContainer = "Sessions",
+    [string]$CosmosDbMessagesContainer = "Messages",
+    
     [string]$EnvironmentName = "demoai-env",
     [string]$BackendAppName = "demoai-backend",
     [string]$FrontendAppName = "demoai-frontend"
@@ -40,6 +46,47 @@ if (-not $loginStatus) {
 Write-Host "Creating resource group: $ResourceGroup" -ForegroundColor Green
 az group create --name $ResourceGroup --location $Location
 
+# Create Cosmos DB account (if specified)
+$cosmosDbUri = ""
+if ($CosmosDbAccountName) {
+    Write-Host "Creating Cosmos DB account: $CosmosDbAccountName" -ForegroundColor Green
+    az cosmosdb create `
+        --name $CosmosDbAccountName `
+        --resource-group $ResourceGroup `
+        --location $Location `
+        --default-consistency-level "Session" `
+        --enable-automatic-failover false
+    
+    # Create database and containers
+    Write-Host "Creating Cosmos DB database and containers..." -ForegroundColor Green
+    az cosmosdb sql database create `
+        --account-name $CosmosDbAccountName `
+        --resource-group $ResourceGroup `
+        --name $CosmosDbDatabaseName
+    
+    # Create Sessions container (partitioned by userId)
+    az cosmosdb sql container create `
+        --account-name $CosmosDbAccountName `
+        --resource-group $ResourceGroup `
+        --database-name $CosmosDbDatabaseName `
+        --name $CosmosDbSessionsContainer `
+        --partition-key-path "/userId" `
+        --throughput 400
+    
+    # Create Messages container (partitioned by sessionId)
+    az cosmosdb sql container create `
+        --account-name $CosmosDbAccountName `
+        --resource-group $ResourceGroup `
+        --database-name $CosmosDbDatabaseName `
+        --name $CosmosDbMessagesContainer `
+        --partition-key-path "/sessionId" `
+        --throughput 400
+    
+    # Get Cosmos DB URI
+    $cosmosDbUri = "https://$CosmosDbAccountName.documents.azure.com:443/"
+    Write-Host "Cosmos DB URI: $cosmosDbUri" -ForegroundColor Cyan
+}
+
 # Create Container Apps environment
 Write-Host "Creating Container Apps environment: $EnvironmentName" -ForegroundColor Green
 az containerapp env create `
@@ -58,6 +105,22 @@ az acr build `
     .
 Pop-Location
 
+# Prepare environment variables for backend
+$backendEnvVars = @(
+    "ENTRA_TENANT_ID=$EntraTenantId"
+    "ENTRA_CLIENT_ID=$EntraBackendClientId"
+)
+
+# Add Cosmos DB environment variables if Cosmos DB is configured
+if ($CosmosDbAccountName) {
+    $backendEnvVars += @(
+        "COSMOS_DB_ACCOUNT_URI=$cosmosDbUri"
+        "COSMOS_DB_DATABASE_NAME=$CosmosDbDatabaseName"
+        "COSMOS_DB_SESSIONS_CONTAINER=$CosmosDbSessionsContainer"
+        "COSMOS_DB_MESSAGES_CONTAINER=$CosmosDbMessagesContainer"
+    )
+}
+
 # Deploy backend container app
 Write-Host ""
 Write-Host "Deploying backend container app..." -ForegroundColor Green
@@ -71,9 +134,32 @@ az containerapp create `
     --registry-server "$ContainerRegistry.azurecr.io" `
     --cpu 0.5 `
     --memory 1Gi `
-    --env-vars `
-        "ENTRA_TENANT_ID=$EntraTenantId" `
-        "ENTRA_CLIENT_ID=$EntraBackendClientId"
+    --env-vars ($backendEnvVars -join " ")
+
+# Configure managed identity for Cosmos DB access (if Cosmos DB is used)
+if ($CosmosDbAccountName) {
+    Write-Host "Configuring managed identity for Cosmos DB access..." -ForegroundColor Green
+    
+    # Enable system-assigned managed identity
+    az containerapp identity assign `
+        --name $BackendAppName `
+        --resource-group $ResourceGroup `
+        --system-assigned
+    
+    # Get the managed identity principal ID
+    $principalId = az containerapp identity show `
+        --name $BackendAppName `
+        --resource-group $ResourceGroup `
+        --query "principalId" `
+        --output tsv
+    
+    # Assign Cosmos DB Contributor role to the managed identity
+    $cosmosDbResourceId = "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/$ResourceGroup/providers/Microsoft.DocumentDB/databaseAccounts/$CosmosDbAccountName"
+    az role assignment create `
+        --assignee $principalId `
+        --role "Cosmos DB Built-in Data Contributor" `
+        --scope $cosmosDbResourceId
+}
 
 # Get backend URL
 $backendUrl = az containerapp show `
@@ -143,6 +229,19 @@ az containerapp update `
 Write-Host ""
 Write-Host "=== Deployment Complete ===" -ForegroundColor Green
 Write-Host ""
+Write-Host "📝 Deployed Resources:" -ForegroundColor Yellow
+Write-Host "   - Frontend App: $frontendUrl" -ForegroundColor Cyan
+Write-Host "   - Backend API: $backendUrl" -ForegroundColor Cyan
+if ($CosmosDbAccountName) {
+    Write-Host "   - Cosmos DB: $cosmosDbUri" -ForegroundColor Cyan
+    Write-Host "   - Database: $CosmosDbDatabaseName" -ForegroundColor White
+    Write-Host "   - Sessions Container: $CosmosDbSessionsContainer (partitioned by userId)" -ForegroundColor White
+    Write-Host "   - Messages Container: $CosmosDbMessagesContainer (partitioned by sessionId)" -ForegroundColor White
+    Write-Host "   ✅ Managed Identity configured for Cosmos DB access" -ForegroundColor Green
+} else {
+    Write-Host "   ⚠️ Cosmos DB not configured - chat history will be disabled" -ForegroundColor Yellow
+}
+Write-Host ""
 Write-Host "📝 Next Steps:" -ForegroundColor Yellow
 Write-Host "1. Update your Entra ID app registrations:" -ForegroundColor White
 Write-Host "   - Frontend app redirect URIs: $frontendUrl" -ForegroundColor White
@@ -150,6 +249,21 @@ Write-Host "   - Frontend app logout URL: $frontendUrl" -ForegroundColor White
 Write-Host ""
 Write-Host "2. Test your deployment:" -ForegroundColor White
 Write-Host "   - Frontend: $frontendUrl" -ForegroundColor Cyan
-Write-Host "   - Backend: $backendUrl/health" -ForegroundColor Cyan
+Write-Host "   - Backend Health: $backendUrl/health" -ForegroundColor Cyan
+if ($CosmosDbAccountName) {
+    Write-Host "   - Chat History: Test chat functionality in the app" -ForegroundColor Cyan
+}
 Write-Host ""
-Write-Host "See SETUP-SSO.md for complete configuration details." -ForegroundColor White
+Write-Host "📚 Documentation:" -ForegroundColor Yellow
+Write-Host "   - Setup Guide: SETUP-SSO.md" -ForegroundColor White
+Write-Host "   - Chat History: CHAT-HISTORY.md" -ForegroundColor White
+Write-Host "   - Architecture: ARCHITECTURE.md" -ForegroundColor White
+Write-Host ""
+if ($CosmosDbAccountName) {
+    Write-Host "💡 Cosmos DB Features Available:" -ForegroundColor Green
+    Write-Host "   ✅ Persistent chat history" -ForegroundColor White
+    Write-Host "   ✅ User-scoped conversations" -ForegroundColor White
+    Write-Host "   ✅ Error resilience and retry logic" -ForegroundColor White
+    Write-Host "   ✅ Two-container optimized architecture" -ForegroundColor White
+    Write-Host "   ✅ Managed identity authentication" -ForegroundColor White
+}

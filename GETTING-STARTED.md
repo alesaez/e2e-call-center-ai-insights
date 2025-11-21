@@ -41,6 +41,7 @@ Follow this checklist to get your SSO-enabled application up and running.
   - [ ] Set `ENTRA_TENANT_ID`
   - [ ] Set `ENTRA_CLIENT_ID` (backend client ID)
   - [ ] Set `ALLOWED_ORIGINS=["http://localhost:3000","http://localhost:5173"]`
+  - [ ] **Optional - For Chat History:** Set Cosmos DB variables (see below)
   - [ ] **Optional - For CS Chatbot:** Set `COPILOT_STUDIO_*` variables (see below)
 - [ ] Create Python virtual environment: `python -m venv venv`
 - [ ] Activate virtual environment:
@@ -94,6 +95,65 @@ Follow this checklist to get your SSO-enabled application up and running.
 - [ ] User profile endpoint returns data
 - [ ] Check browser console for errors
 - [ ] Check backend logs for issues
+
+## ☐ Optional: Setup Chat History with Cosmos DB
+
+### Prerequisites for Chat History
+- [ ] Azure Cosmos DB account (SQL API)
+- [ ] Database named `CallCenterAI`
+- [ ] Two containers with specific partition keys:
+  - `Sessions` container (partition key: `/userId`)
+  - `Messages` container (partition key: `/sessionId`)
+
+### Create Cosmos DB Resources
+- [ ] Go to Azure Portal > Create Cosmos DB account (SQL API)
+- [ ] Create database: `CallCenterAI`
+- [ ] Create Sessions container:
+  - Name: `Sessions`
+  - Partition key: `/userId`
+  - Throughput: 400 RU/s (autoscale recommended)
+- [ ] Create Messages container:
+  - Name: `Messages`
+  - Partition key: `/sessionId`
+  - Throughput: 400 RU/s (autoscale recommended)
+
+### Configure Cosmos DB Access
+- [ ] Option 1 - DefaultAzureCredential (Recommended for Development):
+  - [ ] Login to Azure CLI: `az login`
+  - [ ] Assign "Cosmos DB Built-in Data Contributor" role to your user
+  - [ ] Set only `COSMOS_DB_ACCOUNT_URI` in `.env`
+- [ ] Option 2 - Connection String (Production):
+  - [ ] Get connection string from Azure Portal
+  - [ ] Set `COSMOS_DB_CONNECTION_STRING` in `.env`
+
+### Update Backend Configuration for Chat History
+- [ ] Edit `backend/.env`:
+  ```env
+  # Cosmos DB Configuration for Chat History
+  COSMOS_DB_ACCOUNT_URI=https://your-account.documents.azure.com:443/
+  COSMOS_DB_DATABASE_NAME=CallCenterAI
+  COSMOS_DB_SESSIONS_CONTAINER=Sessions
+  COSMOS_DB_MESSAGES_CONTAINER=Messages
+  
+  # Optional: Use connection string instead
+  # COSMOS_DB_CONNECTION_STRING=AccountEndpoint=...;AccountKey=...;
+  ```
+- [ ] Restart backend server
+
+### Test Chat History
+- [ ] Login to the application
+- [ ] Navigate to **Chatbot** page
+- [ ] Verify "Chat History" and "New Chat" buttons appear
+- [ ] Create a new conversation
+- [ ] Send messages and verify they persist
+- [ ] Refresh page and verify conversation loads
+- [ ] Check backend logs for Cosmos DB connection success
+
+### Benefits of Two-Container Architecture
+- ✅ **Performance**: Optimized queries for sessions vs messages
+- ✅ **Scalability**: Independent scaling per container
+- ✅ **Cost Efficiency**: Reduced cross-partition queries
+- ✅ **Future-Ready**: Supports vector search and advanced features
 
 ## ☐ Optional: Setup CS Chatbot Integration
 
