@@ -9,14 +9,20 @@ from pathlib import Path
 import logging
 
 # Configure Azure SDK logging to be less verbose (globally)
-# Suppress HTTP request/response logging from Azure SDKs
+# Can be overridden with AZURE_SDK_VERBOSE_LOGGING=true environment variable
+import os
+
+verbose_logging = os.getenv("AZURE_SDK_VERBOSE_LOGGING", "false").lower() == "true"
+log_level = logging.DEBUG if verbose_logging else logging.ERROR
+
+# Suppress HTTP request/response logging from Azure SDKs unless explicitly enabled
 azure_loggers_to_suppress = [
     "azure.core.pipeline.policies.http_logging_policy",
     "azure.cosmos",
-    "azure.cosmos.aio",
-    "azure.cosmos._cosmos_client_connection", 
+    "azure.cosmos.aio", 
+    "azure.cosmos._cosmos_client_connection",
     "azure.identity",
-    "azure.identity._internal",
+    "azure.identity._internal", 
     "azure.identity.aio",
     "msal",
     "urllib3.connectionpool",
@@ -24,7 +30,7 @@ azure_loggers_to_suppress = [
 ]
 
 for logger_name in azure_loggers_to_suppress:
-    logging.getLogger(logger_name).setLevel(logging.ERROR)
+    logging.getLogger(logger_name).setLevel(log_level)
 
 # Get the directory where this config.py file is located
 BASE_DIR = Path(__file__).resolve().parent
