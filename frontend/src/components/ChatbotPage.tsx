@@ -301,7 +301,6 @@ export default function ChatbotPage() {
             sender: 'bot',
             timestamp: new Date(),
           };
-          console.log('🎉 Setting initial welcome message');
           setMessages([welcomeMessage]);
         }
         
@@ -370,7 +369,6 @@ export default function ChatbotPage() {
       timestamp: new Date(),
     };
 
-    console.log('📤 Adding user message:', userMessage);
     setMessages(prev => [...prev, userMessage]);
     setInputText('');
     setSending(true);
@@ -382,11 +380,7 @@ export default function ChatbotPage() {
       try {
         // Wait for user message to be saved before proceeding
         userMessageSaved = await saveMessageWithRetry(conversationId, userMessage);
-        if (!userMessageSaved) {
-          console.warn('⚠️ User message may not be persisted properly');
-        }
       } catch (error) {
-        console.error('❌ Error saving user message:', error);
         // Continue anyway - don't block the chat flow
       }
     }
@@ -411,11 +405,7 @@ export default function ChatbotPage() {
       // Save bot response immediately
       if (conversationId) {
         // Save bot response in background - don't await to avoid blocking UI
-        saveMessageWithRetry(conversationId, botResponse).then(saved => {
-          if (!saved) {
-            console.warn('⚠️ Bot response may not be persisted properly');
-          }
-        });
+        saveMessageWithRetry(conversationId, botResponse);
       }
       
       setSending(false);
@@ -439,7 +429,7 @@ export default function ChatbotPage() {
       setSending(false);
     }
     } catch (globalError) {
-      console.error('❌ Critical error in sendMessage:', globalError);
+      console.error('Critical error in sendMessage:', globalError);
       
       // Show error message to user
       const errorMessage: Message = {
@@ -495,13 +485,11 @@ export default function ChatbotPage() {
         };
         
         await apiClient.post(`/api/chat/conversations/${conversationId}/messages`, payload);
-        console.log(`✅ Message saved to history (attempt ${attempt}):`, message.text.substring(0, 50));
         return true;
       } catch (error) {
-        console.error(`❌ Failed to save message (attempt ${attempt}/${maxRetries}):`, error);
         if (attempt === maxRetries) {
           // Store failed message for later retry
-          console.error('💾 Message will be lost - consider implementing local storage backup');
+          console.error('Failed to save message after all retries:', error);
           return false;
         }
         // Wait before retrying (exponential backoff)
@@ -532,13 +520,8 @@ export default function ChatbotPage() {
         (msg.sender || msg.role)
       );
       
-      if (validMessages.length !== serverMessages.length) {
-        console.warn('⚠️ Some server messages are malformed - filtered out invalid ones');
-      }
-      
       // Only sync if server has more messages than local (never replace with fewer)
       if (validMessages.length > messages.length) {
-        console.log('📥 Server has newer messages - syncing');
         
         // Convert server messages to safe format before setting
         const safeMessages = validMessages.map((msg: any) => ({
@@ -551,12 +534,9 @@ export default function ChatbotPage() {
         }));
         
         setMessages(safeMessages);
-      } else if (validMessages.length < messages.length) {
-        // Server has fewer messages - this might indicate unsaved messages
-        console.warn('⚠️ Local messages not yet saved to server - keeping local state');
       }
     } catch (error) {
-      console.error('Failed to sync messages:', error);
+      // Sync errors are not critical for user experience
     }
   };
 
@@ -582,8 +562,6 @@ export default function ChatbotPage() {
       // Load the full conversation
       const response = await apiClient.get(`/api/chat/conversations/${conversation.id}`);
       const fullConversation = response.data;
-      
-      console.log('🔄 Loading conversation:', conversation.id, 'Messages:', fullConversation.messages?.length || 0);
       
       // Convert messages to our Message format with safe conversion
       const convertedMessages: Message[] = fullConversation.messages?.map((msg: any) => {

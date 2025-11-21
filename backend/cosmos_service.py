@@ -10,6 +10,11 @@ from azure.identity.aio import DefaultAzureCredential
 from typing import List, Optional
 import logging
 from config import Settings
+
+# Configure Azure SDK logging to be less verbose
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+logging.getLogger("azure.cosmos").setLevel(logging.WARNING)
+logging.getLogger("azure.identity").setLevel(logging.WARNING)
 from chat_models import (
     ChatSession, ChatMessage, ChatConversation, ConversationSummary, 
     MessageRole, MessageSender
@@ -44,7 +49,6 @@ class CosmosDBService:
             
             if is_localhost and hasattr(self.settings, 'COSMOS_DB_ACCOUNT_URI') and self.settings.COSMOS_DB_ACCOUNT_URI:
                 # For localhost development, use DefaultAzureCredential
-                logger.info("Using DefaultAzureCredential for Cosmos DB authentication (localhost)")
                 credential = DefaultAzureCredential()
                 self.client = CosmosClient(
                     url=self.settings.COSMOS_DB_ACCOUNT_URI,
@@ -52,12 +56,10 @@ class CosmosDBService:
                 )
             elif self.settings.COSMOS_DB_CONNECTION_STRING:
                 # Use connection string for production or when DefaultAzureCredential is not available
-                logger.info("Using connection string for Cosmos DB authentication")
                 self.client = CosmosClient.from_connection_string(
                     self.settings.COSMOS_DB_CONNECTION_STRING
                 )
             else:
-                logger.warning("Cosmos DB not configured. Please set either COSMOS_DB_ACCOUNT_URI (for localhost with DefaultAzureCredential) or COSMOS_DB_CONNECTION_STRING. Chat history will not be available.")
                 return
             
             # Create database if it doesn't exist
@@ -80,7 +82,6 @@ class CosmosDBService:
             )
             
             self._initialized = True
-            logger.info(f"Cosmos DB initialized: {self.settings.COSMOS_DB_DATABASE_NAME} with containers Sessions and Messages")
             
         except Exception as e:
             logger.error(f"Failed to initialize Cosmos DB: {e}")
@@ -133,12 +134,10 @@ class CosmosDBService:
             
             await self.sessions_container.create_item(body=item)
             
-            logger.info(f"Created session {session_id} for user {user_id}")
             return session
             
         except exceptions.CosmosResourceExistsError:
             # Handle duplicate ID (rare but possible)
-            logger.warning(f"Session ID {session_id} already exists, retrying...")
             return await self.create_session(user_id, user_name, copilot_conversation_id, title, session_data, tenant_id, model)
         except Exception as e:
             logger.error(f"Failed to create session: {e}")
@@ -423,7 +422,6 @@ class CosmosDBService:
             # Update session's lastActiveAt and title if needed
             await self._update_session_activity(session_id, user_id, content, role)
             
-            logger.info(f"Added message {message_id} to session {session_id}")
             return True
             
         except Exception as e:
@@ -518,11 +516,9 @@ class CosmosDBService:
                 body=session_item
             )
             
-            logger.info(f"Soft deleted session {session_id} for user {user_id}")
             return True
             
         except exceptions.CosmosResourceNotFoundError:
-            logger.warning(f"Session {session_id} not found for user {user_id}")
             return False
         except Exception as e:
             logger.error(f"Failed to delete session {session_id}: {e}")
@@ -555,7 +551,6 @@ class CosmosDBService:
                     partition_key=session_id
                 )
             
-            logger.info(f"Deleted {len(message_ids)} messages for session {session_id}")
             return True
             
         except Exception as e:

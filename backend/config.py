@@ -6,6 +6,25 @@ from pydantic import ConfigDict
 from pydantic_settings import BaseSettings
 from typing import List, Optional
 from pathlib import Path
+import logging
+
+# Configure Azure SDK logging to be less verbose (globally)
+# Suppress HTTP request/response logging from Azure SDKs
+azure_loggers_to_suppress = [
+    "azure.core.pipeline.policies.http_logging_policy",
+    "azure.cosmos",
+    "azure.cosmos.aio",
+    "azure.cosmos._cosmos_client_connection", 
+    "azure.identity",
+    "azure.identity._internal",
+    "azure.identity.aio",
+    "msal",
+    "urllib3.connectionpool",
+    "requests.packages.urllib3.connectionpool"
+]
+
+for logger_name in azure_loggers_to_suppress:
+    logging.getLogger(logger_name).setLevel(logging.ERROR)
 
 # Get the directory where this config.py file is located
 BASE_DIR = Path(__file__).resolve().parent

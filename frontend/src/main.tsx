@@ -14,21 +14,9 @@ await msalInstance.initialize();
 
 // Handle redirect promise to catch redirect response
 msalInstance.handleRedirectPromise().then((response) => {
-  if (response) {
-    console.log('Login redirect successful', response);
-  }
+  // Login redirect handled silently
 }).catch((error) => {
-  console.error('Redirect error:', error);
-});
-
-// Optional: Add event callback for debugging
-msalInstance.addEventCallback((event) => {
-  if (event.eventType === EventType.LOGIN_SUCCESS) {
-    console.log('Login success event:', event);
-  }
-  if (event.eventType === EventType.LOGIN_FAILURE) {
-    console.error('Login failure event:', event);
-  }
+  console.error('Authentication error:', error);
 });
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

@@ -21,29 +21,12 @@ apiClient.interceptors.request.use(
         throw new Error('No authenticated account found');
       }
 
-      console.log('Acquiring token for account:', accounts[0].username);
-      console.log('Token request scopes:', apiRequest.scopes);
-
       // Acquire token silently
       const response = await msalInstance.acquireTokenSilent({
         ...apiRequest,
         account: accounts[0],
       });
-
-      console.log('Token acquired successfully');
-      console.log('Token scopes:', response.scopes);
-      console.log('ID Token claims:', response.idTokenClaims);
       
-      // Decode access token to check audience
-      if (response.accessToken) {
-        const tokenParts = response.accessToken.split('.');
-        if (tokenParts.length === 3) {
-          const payload = JSON.parse(atob(tokenParts[1]));
-          console.log('Access Token audience:', payload.aud);
-          console.log('Access Token scopes:', payload.scp);
-        }
-      }
-
       // Add token to request headers
       if (response.accessToken) {
         config.headers.Authorization = `Bearer ${response.accessToken}`;
@@ -52,11 +35,8 @@ apiClient.interceptors.request.use(
       return config;
     } catch (error) {
       console.error('Token acquisition failed:', error);
-      console.error('Error details:', JSON.stringify(error, null, 2));
       
       // If silent token acquisition fails, redirect to login
-      // Don't try popup as it may be blocked and causes errors
-      console.log('Redirecting to login for interactive authentication');
       window.location.href = '/login';
       throw error;
     }
@@ -96,7 +76,6 @@ apiClient.interceptors.response.use(
         }
       } catch (refreshError) {
         // Redirect to login if token refresh fails
-        console.log('Token refresh failed, redirecting to login');
         window.location.href = '/login';
         return Promise.reject(refreshError);
       }

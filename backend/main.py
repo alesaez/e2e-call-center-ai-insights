@@ -9,6 +9,11 @@ from typing import Optional, Dict, List
 import httpx
 import logging
 from jose import jwt, JWTError
+
+# Configure Azure SDK logging to be less verbose
+logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
+logging.getLogger("azure.cosmos").setLevel(logging.WARNING)
+logging.getLogger("azure.identity").setLevel(logging.WARNING)
 from functools import lru_cache
 from datetime import datetime
 from config import Settings
@@ -65,12 +70,9 @@ async def startup_event():
         cosmos_service = CosmosDBService(settings)
         try:
             await cosmos_service.initialize()
-            logger.info("✓ Cosmos DB service initialized successfully")
         except Exception as e:
-            logger.error(f"✗ Failed to initialize Cosmos DB service: {e}")
+            logger.error(f"Failed to initialize Cosmos DB service: {e}")
             cosmos_service = None
-    else:
-        logger.info("⚠ Cosmos DB connection string not provided - chat history will not be available")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -78,7 +80,6 @@ async def shutdown_event():
     global cosmos_service
     if cosmos_service:
         await cosmos_service.close()
-        logger.info("Cosmos DB service closed")
 
 # CORS configuration
 settings = get_settings()
@@ -162,8 +163,6 @@ async def verify_token(
         
         # First, decode without verification to see what's in the token
         unverified_payload = jwt.get_unverified_claims(token)
-        logger.info(f"Token audience (unverified): {unverified_payload.get('aud')}")
-        logger.info(f"Token issuer (unverified): {unverified_payload.get('iss')}")
         
         # Accept both v1.0 and v2.0 token issuers
         v1_issuer = f"https://sts.windows.net/{settings.ENTRA_TENANT_ID}/"
@@ -176,9 +175,6 @@ async def verify_token(
         # Try to decode with the api:// prefixed audience first
         api_audience = f"api://{settings.ENTRA_CLIENT_ID}"
         
-        logger.info(f"Validating token with audience: {api_audience}")
-        logger.info(f"Using issuer: {expected_issuer}")
-        
         try:
             # Try with api:// prefix first (most common for exposed APIs)
             payload = jwt.decode(
@@ -190,7 +186,6 @@ async def verify_token(
             )
         except JWTError as e:
             # Fallback to client ID without prefix
-            logger.info(f"Trying fallback audience: {settings.ENTRA_CLIENT_ID}")
             payload = jwt.decode(
                 token,
                 rsa_key,
@@ -199,12 +194,10 @@ async def verify_token(
                 issuer=expected_issuer
             )
         
-        logger.info(f"Token validated successfully for user: {payload.get('upn', payload.get('email', 'unknown'))}")
         return payload
         
     except JWTError as e:
         logger.error(f"JWT validation error: {e}")
-        logger.error(f"Error type: {type(e).__name__}")
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=f"Invalid authentication credentials: {str(e)}",
@@ -376,8 +369,6 @@ async def get_copilot_studio_token(
         conversation_id = action.conversation.id
                 
         # The conversation is started when we send the first message
-        logger.info(f"Copilot Studio session initialized with conversation_id: {conversation_id}")
-        
         return {
             "conversationId": conversation_id,
             "userId": user_id,
