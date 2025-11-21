@@ -23,18 +23,26 @@
 
 ✅ **Verification:** You should see "Single-page application" listed under Platform configurations
 
-## Step 2: Start the Backend (2 minutes)
+## Step 2: Start the Backend (3 minutes)
 
 Open a PowerShell terminal:
 
 ```powershell
 cd .\e2e-call-center-ai-insights\backend
 
+# Create virtual environment if it doesn't exist
+if (-not (Test-Path venv)) {
+    python -m venv venv
+}
+
 # Activate virtual environment
 .\venv\Scripts\Activate.ps1
 
+# Install/update dependencies
+pip install -r requirements.txt
+
 # Start the server
-uvicorn main:app --reload
+python -m uvicorn main:app --reload --port 8000
 ```
 
 ✅ **Verification:** You should see:
@@ -42,6 +50,8 @@ uvicorn main:app --reload
 INFO:     Uvicorn running on http://127.0.0.1:8000
 INFO:     Application startup complete.
 ```
+
+⚠️ **Expected Cosmos DB Warning:** You may see Cosmos DB firewall errors - this is normal and will be fixed in the next steps.
 
 ## Step 3: Start the Frontend (1 minute)
 
@@ -61,19 +71,57 @@ VITE v5.x.x  ready in xxx ms
 ➜  Local:   http://localhost:3000/
 ```
 
-## Step 4: Test the Application (5 minutes)
+## Step 4: Configure Chat History (Optional - 5 minutes)
 
-### 4.1 Open the Application
+**Note:** Chat history requires Azure Cosmos DB. Skip this step if you don't need chat persistence.
+
+### 4.1 Fix Cosmos DB Firewall (if needed)
+If you see Cosmos DB firewall errors in the backend terminal:
+
+1. Open [Azure Portal](https://portal.azure.com)
+2. Navigate to your Cosmos DB account
+3. Go to **Settings** → **Networking**
+4. Under **Firewall and virtual networks**:
+   - Select **Allow access from Azure portal**
+   - Add your current IP address
+   - Click **Save**
+
+### 4.2 Configure Authentication
+The backend automatically uses **DefaultAzureCredential** for localhost:
+
+```powershell
+# Ensure you're logged in to Azure CLI
+az login
+
+# Verify your identity
+az account show
+```
+
+✅ **Verification:** Backend should show:
+```
+INFO:cosmos_service:Using DefaultAzureCredential for Cosmos DB authentication (localhost)
+INFO:cosmos_service:Cosmos DB initialized: ContosoSuites/ChatHistory
+```
+
+## Step 5: Test the Application (5 minutes)
+
+### 5.1 Open the Application
 - Navigate to: http://localhost:3000
 - You should see the Microsoft login page
 
-### 4.2 Sign In
+### 5.2 Sign In
 - Click "Sign in with Microsoft"
 - Use your Microsoft/Entra ID credentials
 - Grant any requested permissions
 - You should be redirected to the dashboard
 
-### 4.3 Verify Dashboard Components
+### 5.3 Test Chat History (if configured)
+- Navigate to the **Chatbot** page
+- Look for "Chat History" and "New Chat" buttons in the header
+- Try creating a conversation
+- Verify messages are saved and can be retrieved
+
+### 5.4 Verify Dashboard Components
 
 **Check KPIs (Top Section):**
 - [ ] Total Calls card displays (with phone icon)
@@ -89,13 +137,13 @@ VITE v5.x.x  ready in xxx ms
 - [ ] Calls by Hour (bar chart, 10 hours) displays
 - [ ] Agent Performance (bar chart, 5 agents) displays
 
-### 4.4 Test Navigation
+### 5.5 Test Navigation
 
 **Sidebar Navigation:**
 - [ ] Click hamburger menu (☰) - sidebar should expand
 - [ ] Click it again - sidebar should collapse
 - [ ] Click **Dashboard** - should show dashboard (current page)
-- [ ] Click **Chatbot** - should show placeholder page
+- [ ] Click **Chatbot** - should show chatbot page with history functionality
 - [ ] Click **Settings** - should show placeholder page
 - [ ] Navigate back to Dashboard
 
@@ -109,7 +157,7 @@ VITE v5.x.x  ready in xxx ms
 - [ ] Should redirect to login page
 - [ ] Sign back in to continue testing
 
-### 4.5 Test Responsive Design
+### 5.6 Test Responsive Design
 
 **Desktop View:**
 - [ ] Resize browser window to desktop size (>900px)
@@ -125,7 +173,7 @@ VITE v5.x.x  ready in xxx ms
 - [ ] Charts should stack vertically
 - [ ] Clicking hamburger should show sidebar overlay
 
-## Step 5: Check Browser Console (Optional)
+## Step 6: Check Browser Console (Optional)
 
 Press `F12` to open DevTools:
 

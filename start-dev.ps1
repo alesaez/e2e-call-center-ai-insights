@@ -31,13 +31,25 @@ Push-Location backend
 if (-not (Test-Path "venv")) {
     Write-Host "Creating Python virtual environment..." -ForegroundColor Cyan
     python -m venv venv
+    if ($LASTEXITCODE -ne 0) {
+        Write-Host "❌ Failed to create virtual environment. Please ensure Python is installed." -ForegroundColor Red
+        Pop-Location
+        exit 1
+    }
 }
 
-# Activate venv and install dependencies
-Write-Host "Installing backend dependencies..." -ForegroundColor Cyan
-.\venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+# Install/update dependencies in virtual environment
+Write-Host "Installing/updating backend dependencies..." -ForegroundColor Cyan
+& ".\venv\Scripts\python.exe" -m pip install --upgrade pip
+& ".\venv\Scripts\python.exe" -m pip install -r requirements.txt
 
+if ($LASTEXITCODE -ne 0) {
+    Write-Host "❌ Failed to install backend dependencies." -ForegroundColor Red
+    Pop-Location
+    exit 1
+}
+
+Write-Host "✅ Backend setup complete!" -ForegroundColor Green
 Pop-Location
 
 # Frontend setup
@@ -62,9 +74,10 @@ Write-Host ""
 Write-Host "Press Ctrl+C to stop all services" -ForegroundColor Yellow
 Write-Host ""
 
-# Start backend in background
+# Start backend in background using virtual environment Python
 $backendPath = Join-Path $PWD "backend"
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$backendPath'; & '.\venv\Scripts\python.exe' -m uvicorn main:app --reload --host 0.0.0.0 --port 8000"
+$backendPython = Join-Path $backendPath "venv\Scripts\python.exe"
+Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$backendPath'; & '$backendPython' -m uvicorn main:app --reload --port 8000"
 
 # Wait a bit for backend to start
 Start-Sleep -Seconds 3

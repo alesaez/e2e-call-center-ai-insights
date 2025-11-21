@@ -18,11 +18,20 @@ from models import (
     QueryTemplateUpdate,
     QueryTemplateList
 )
+from chat_models import (
+    ChatConversation,
+    ConversationSummary,
+    ChatMessage,
+    MessageSender,
+    CreateConversationRequest,
+    AddMessageRequest
+)
 import uuid
 from microsoft_agents.copilotstudio.client import CopilotClient
 from microsoft_agents.copilotstudio.client.connection_settings import ConnectionSettings
 from microsoft_agents.activity import Activity
 from msal import ConfidentialClientApplication
+from cosmos_service import CosmosDBService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -37,10 +46,39 @@ query_templates_db: Dict[str, QueryTemplate] = {}
 # Security scheme
 security = HTTPBearer()
 
+# Global Cosmos DB service instance
+cosmos_service: Optional[CosmosDBService] = None
+
 # Cached settings
 @lru_cache()
 def get_settings():
     return Settings()
+
+@app.on_event("startup")
+async def startup_event():
+    """Initialize services on startup."""
+    global cosmos_service
+    settings = get_settings()
+    
+    # Initialize Cosmos DB service if connection string is provided
+    if settings.COSMOS_DB_CONNECTION_STRING:
+        cosmos_service = CosmosDBService(settings)
+        try:
+            await cosmos_service.initialize()
+            logger.info("✓ Cosmos DB service initialized successfully")
+        except Exception as e:
+            logger.error(f"✗ Failed to initialize Cosmos DB service: {e}")
+            cosmos_service = None
+    else:
+        logger.info("⚠ Cosmos DB connection string not provided - chat history will not be available")
+
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Cleanup on shutdown."""
+    global cosmos_service
+    if cosmos_service:
+        await cosmos_service.close()
+        logger.info("Cosmos DB service closed")
 
 # CORS configuration
 settings = get_settings()
@@ -459,6 +497,238 @@ async def send_message_to_copilot(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to send message: {str(e)}"
+        )
+
+# ============================================================================
+# Chat History Management Endpoints
+# ============================================================================
+
+@app.get("/api/chat/conversations", response_model=List[ConversationSummary])
+async def get_user_conversations(
+    limit: int = 50,
+    token_payload: Dict = Depends(verify_token)
+):
+    """
+    Get conversation history for the authenticated user.
+    Returns a list of conversation summaries.
+    """
+    if not cosmos_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Chat history service is not available. Cosmos DB not configured."
+        )
+    
+    user_id = token_payload.get("sub") or token_payload.get("oid")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User ID not found in token"
+        )
+    
+    try:
+        conversations = await cosmos_service.get_user_conversations(user_id, limit)
+        return conversations
+    except Exception as e:
+        logger.error(f"Failed to get conversations for user {user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve conversation history"
+        )
+
+@app.post("/api/chat/conversations", response_model=ChatConversation, status_code=status.HTTP_201_CREATED)
+async def create_conversation(
+    request: CreateConversationRequest,
+    token_payload: Dict = Depends(verify_token)
+):
+    """
+    Create a new chat conversation.
+    """
+    if not cosmos_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Chat history service is not available. Cosmos DB not configured."
+        )
+    
+    user_id = token_payload.get("sub") or token_payload.get("oid")
+    user_name = token_payload.get("name", "User")
+    
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User ID not found in token"
+        )
+    
+    try:
+        # Generate a new Copilot Studio conversation ID
+        copilot_conversation_id = str(uuid.uuid4())
+        
+        conversation = await cosmos_service.create_conversation(
+            user_id=user_id,
+            user_name=user_name,
+            copilot_conversation_id=copilot_conversation_id,
+            title=request.title,
+            session_data=request.session_data
+        )
+        
+        return conversation
+    except Exception as e:
+        logger.error(f"Failed to create conversation for user {user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to create conversation"
+        )
+
+@app.get("/api/chat/conversations/{conversation_id}", response_model=ChatConversation)
+async def get_conversation(
+    conversation_id: str,
+    token_payload: Dict = Depends(verify_token)
+):
+    """
+    Get a specific conversation with full message history.
+    """
+    if not cosmos_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Chat history service is not available. Cosmos DB not configured."
+        )
+    
+    user_id = token_payload.get("sub") or token_payload.get("oid")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User ID not found in token"
+        )
+    
+    try:
+        conversation = await cosmos_service.get_conversation(conversation_id, user_id)
+        if not conversation:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Conversation not found"
+            )
+        
+        return conversation
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get conversation {conversation_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve conversation"
+        )
+
+@app.get("/api/chat/conversations/{conversation_id}/messages", response_model=List[ChatMessage])
+async def get_messages(
+    conversation_id: str,
+    token_payload: Dict = Depends(verify_token)
+):
+    """
+    Get all messages for a specific conversation/session.
+    """
+    if not cosmos_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Chat history service is not available. Cosmos DB not configured."
+        )
+    
+    user_id = token_payload.get("sub") or token_payload.get("oid")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User ID not found in token"
+        )
+    
+    try:
+        messages = await cosmos_service.get_session_messages(conversation_id)
+        return messages
+    except Exception as e:
+        logger.error(f"Failed to get messages for conversation {conversation_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve messages"
+        )
+
+@app.post("/api/chat/conversations/{conversation_id}/messages")
+async def add_message(
+    conversation_id: str,
+    message: ChatMessage,
+    token_payload: Dict = Depends(verify_token)
+):
+    """
+    Add a message to an existing conversation.
+    """
+    if not cosmos_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Chat history service is not available. Cosmos DB not configured."
+        )
+    
+    user_id = token_payload.get("sub") or token_payload.get("oid")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User ID not found in token"
+        )
+    
+    try:
+        success = await cosmos_service.add_message_to_conversation(
+            conversation_id, user_id, message
+        )
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Conversation not found or message could not be added"
+            )
+        
+        return {"success": True, "message": "Message added successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to add message to conversation {conversation_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to add message"
+        )
+
+@app.delete("/api/chat/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
+    token_payload: Dict = Depends(verify_token)
+):
+    """
+    Delete (soft delete) a conversation.
+    """
+    if not cosmos_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Chat history service is not available. Cosmos DB not configured."
+        )
+    
+    user_id = token_payload.get("sub") or token_payload.get("oid")
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User ID not found in token"
+        )
+    
+    try:
+        success = await cosmos_service.delete_conversation(conversation_id, user_id)
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Conversation not found"
+            )
+        
+        return {"success": True, "message": "Conversation deleted successfully"}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to delete conversation {conversation_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete conversation"
         )
 
 # ============================================================================

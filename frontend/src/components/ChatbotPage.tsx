@@ -1,9 +1,10 @@
-import { useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef, Component, ErrorInfo, ReactNode } from 'react';
 import {
   Box,
   Typography,
   Paper,
   Alert,
+  AlertTitle,
   CircularProgress,
   TextField,
   Button,
@@ -21,13 +22,54 @@ import {
   SmartToy as BotIcon,
   Person as PersonIcon,
   QuestionMark as QuestionIcon,
+  History as HistoryIcon,
 } from '@mui/icons-material';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import apiClient from '../services/apiClient';
 import QuestionCards from './QuestionCards';
 import ReferenceProcessor from './ReferenceProcessor';
+import ChatHistoryDrawer, { ConversationSummary } from './ChatHistoryDrawer';
 import { predefinedQuestions } from '../config/chatQuestions';
+
+// Error Boundary Component
+interface ErrorBoundaryState {
+  hasError: boolean;
+  error?: Error;
+}
+
+class MessageListErrorBoundary extends Component<
+  { children: ReactNode },
+  ErrorBoundaryState
+> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error: Error): ErrorBoundaryState {
+    return { hasError: true, error };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('❌ Message rendering error caught by boundary:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <Box sx={{ p: 2, textAlign: 'center' }}>
+          <Alert severity="error">
+            <AlertTitle>Message Rendering Error</AlertTitle>
+            There was an error displaying messages. Please refresh the page or try starting a new conversation.
+          </Alert>
+        </Box>
+      );
+    }
+
+    return this.props.children;
+  }
+}
 
 interface CopilotStudioSession {
   conversationId: string;
@@ -226,6 +268,12 @@ export default function ChatbotPage() {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [showQuestions, setShowQuestions] = useState(true);
+  
+  // Chat history state
+  const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+
+  const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
@@ -245,15 +293,17 @@ export default function ChatbotPage() {
 
         setSession(sessionData);
         
-        // Add welcome message
-        const welcomeMessage: Message = {
-          id: 'welcome',
-          // If welcomeMessage is empty use default welcome message
-          text: sessionData.welcomeMessage || `Hello! I'm your AI assistant. How can I help you today?`,
-          sender: 'bot',
-          timestamp: new Date(),
-        };
-        setMessages([welcomeMessage]);
+        // Only set welcome message if we don't have any messages yet
+        if (messages.length === 0) {
+          const welcomeMessage: Message = {
+            id: 'welcome',
+            text: sessionData.welcomeMessage || `Hello! I'm your AI assistant. How can I help you today?`,
+            sender: 'bot',
+            timestamp: new Date(),
+          };
+          console.log('🎉 Setting initial welcome message');
+          setMessages([welcomeMessage]);
+        }
         
         setLoading(false);
       } catch (err: any) {
@@ -271,12 +321,47 @@ export default function ChatbotPage() {
       }
     };
 
-    initializeSession();
-  }, []);
+    // Only initialize session once when component mounts
+    if (!session) {
+      initializeSession();
+    }
+    loadConversations();
+  }, [session]);
+
+
+
+  // Periodic sync to ensure data integrity (sync every 30 seconds)
+  useEffect(() => {
+    if (!currentConversationId) return;
+
+    const syncInterval = setInterval(() => {
+      syncMessagesWithHistory();
+    }, 30000); // 30 seconds
+
+    return () => clearInterval(syncInterval);
+  }, [currentConversationId]);
 
   const sendMessage = async (messageText?: string) => {
-    const textToSend = messageText || inputText.trim();
-    if (!textToSend || sending || !session) return;
+    try {
+      const textToSend = messageText || inputText.trim();
+      if (!textToSend || sending || !session) return;
+
+    // Ensure we have a conversation for message persistence
+    let conversationId = currentConversationId;
+    if (!conversationId) {
+      try {
+        const newConversationResponse = await apiClient.post('/api/chat/conversations', {
+          title: textToSend.length > 50 ? textToSend.substring(0, 50) + '...' : textToSend
+        });
+        conversationId = newConversationResponse.data.id;
+        setCurrentConversationId(conversationId);
+        // Refresh conversation list to show the new conversation in history
+        await loadConversations();
+      } catch (err) {
+        console.error('Failed to create conversation for message:', err);
+        // Continue without persistence if conversation creation fails
+      }
+    }
 
     const userMessage: Message = {
       id: Date.now().toString(),
@@ -285,10 +370,26 @@ export default function ChatbotPage() {
       timestamp: new Date(),
     };
 
+    console.log('📤 Adding user message:', userMessage);
     setMessages(prev => [...prev, userMessage]);
     setInputText('');
     setSending(true);
     setShowQuestions(false); // Hide questions after first message
+
+    // Save user message immediately to prevent data loss
+    let userMessageSaved = false;
+    if (conversationId) {
+      try {
+        // Wait for user message to be saved before proceeding
+        userMessageSaved = await saveMessageWithRetry(conversationId, userMessage);
+        if (!userMessageSaved) {
+          console.warn('⚠️ User message may not be persisted properly');
+        }
+      } catch (error) {
+        console.error('❌ Error saving user message:', error);
+        // Continue anyway - don't block the chat flow
+      }
+    }
 
     try {
       // Send message to Copilot Studio via backend
@@ -306,6 +407,17 @@ export default function ChatbotPage() {
       };
       
       setMessages(prev => [...prev, botResponse]);
+      
+      // Save bot response immediately
+      if (conversationId) {
+        // Save bot response in background - don't await to avoid blocking UI
+        saveMessageWithRetry(conversationId, botResponse).then(saved => {
+          if (!saved) {
+            console.warn('⚠️ Bot response may not be persisted properly');
+          }
+        });
+      }
+      
       setSending(false);
 
     } catch (err: any) {
@@ -317,7 +429,29 @@ export default function ChatbotPage() {
         timestamp: new Date(),
       };
       setMessages(prev => [...prev, errorMessage]);
+      
+      // Save error response to history (user message was already saved above)
+      if (conversationId) {
+        // Don't await - save in background to avoid blocking UI
+        saveMessageWithRetry(conversationId, errorMessage);
+      }
+      
       setSending(false);
+    }
+    } catch (globalError) {
+      console.error('❌ Critical error in sendMessage:', globalError);
+      
+      // Show error message to user
+      const errorMessage: Message = {
+        id: Date.now().toString(),
+        text: 'Sorry, there was an error processing your message. Please try again.',
+        sender: 'bot',
+        timestamp: new Date(),
+      };
+      
+      setMessages(prev => [...prev, errorMessage]);
+      setSending(false);
+      setError('Failed to send message. Please try again.');
     }
   };
 
@@ -332,11 +466,213 @@ export default function ChatbotPage() {
     sendMessage(question);
   };
 
+  // Chat History Functions
+  const loadConversations = async () => {
+    try {
+      const response = await apiClient.get<ConversationSummary[]>('/api/chat/conversations');
+      setConversations(response.data);
+    } catch (error) {
+      console.error('Failed to load conversations:', error);
+      setError('Failed to load chat history');
+    }
+  };
+
+  // Robust message saving with retry logic
+  const saveMessageWithRetry = async (conversationId: string, message: Message, maxRetries = 3) => {
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        // Send in the format expected by the backend ChatMessage model
+        const payload = {
+          id: message.id,
+          text: message.text,           // Legacy field
+          content: message.text,        // New field
+          sender: message.sender,       // Legacy field
+          role: message.sender === 'user' ? 'user' : 'assistant', // New field
+          timestamp: message.timestamp.toISOString(), // Legacy field
+          createdAt: message.timestamp.toISOString(), // New field
+          sessionId: conversationId,    // New field (required for new schema)
+          type: "message"               // New field
+        };
+        
+        await apiClient.post(`/api/chat/conversations/${conversationId}/messages`, payload);
+        console.log(`✅ Message saved to history (attempt ${attempt}):`, message.text.substring(0, 50));
+        return true;
+      } catch (error) {
+        console.error(`❌ Failed to save message (attempt ${attempt}/${maxRetries}):`, error);
+        if (attempt === maxRetries) {
+          // Store failed message for later retry
+          console.error('💾 Message will be lost - consider implementing local storage backup');
+          return false;
+        }
+        // Wait before retrying (exponential backoff)
+        await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+      }
+    }
+    return false;
+  };
+
+  // Sync local messages with Cosmos DB (optional - for data integrity)
+  const syncMessagesWithHistory = async () => {
+    if (!currentConversationId || sending) return; // Don't sync while sending
+
+    try {
+      const response = await apiClient.get<Message[]>(`/api/chat/conversations/${currentConversationId}/messages`);
+      const serverMessages = response.data;
+      
+      // Validate server response
+      if (!Array.isArray(serverMessages)) {
+        console.warn('⚠️ Invalid server response format - skipping sync');
+        return;
+      }
+      
+      // Validate each message has required fields (cast to any for flexibility)
+      const validMessages = serverMessages.filter((msg: any) => 
+        msg && 
+        (msg.id || msg.text || msg.content) && 
+        (msg.sender || msg.role)
+      );
+      
+      if (validMessages.length !== serverMessages.length) {
+        console.warn('⚠️ Some server messages are malformed - filtered out invalid ones');
+      }
+      
+      // Only sync if server has more messages than local (never replace with fewer)
+      if (validMessages.length > messages.length) {
+        console.log('📥 Server has newer messages - syncing');
+        
+        // Convert server messages to safe format before setting
+        const safeMessages = validMessages.map((msg: any) => ({
+          id: msg.id || `sync-${Date.now()}-${Math.random()}`,
+          text: msg.text || msg.content || '',
+          sender: (msg.sender || (msg.role === 'user' ? 'user' : 'bot')) as 'user' | 'bot',
+          timestamp: msg.timestamp ? new Date(msg.timestamp) : 
+                    msg.createdAt ? new Date(msg.createdAt) : 
+                    new Date()
+        }));
+        
+        setMessages(safeMessages);
+      } else if (validMessages.length < messages.length) {
+        // Server has fewer messages - this might indicate unsaved messages
+        console.warn('⚠️ Local messages not yet saved to server - keeping local state');
+      }
+    } catch (error) {
+      console.error('Failed to sync messages:', error);
+    }
+  };
+
+  const createNewConversation = async () => {
+    try {
+      const response = await apiClient.post('/api/chat/conversations', {
+        title: 'New Conversation'
+      });
+      
+      // Set the new conversation ID and clear messages
+      setCurrentConversationId(response.data.id);
+      setMessages([]);
+      setHistoryDrawerOpen(false);
+      await loadConversations(); // Refresh the list
+    } catch (error) {
+      console.error('Failed to create new conversation:', error);
+      // Could add error handling here if needed
+    }
+  };
+
+  const selectConversation = async (conversation: ConversationSummary) => {
+    try {
+      // Load the full conversation
+      const response = await apiClient.get(`/api/chat/conversations/${conversation.id}`);
+      const fullConversation = response.data;
+      
+      console.log('🔄 Loading conversation:', conversation.id, 'Messages:', fullConversation.messages?.length || 0);
+      
+      // Convert messages to our Message format with safe conversion
+      const convertedMessages: Message[] = fullConversation.messages?.map((msg: any) => {
+        try {
+          return {
+            id: msg.id || `msg-${Date.now()}-${Math.random()}`,
+            text: msg.text || msg.content || '',
+            sender: msg.sender || (msg.role === 'user' ? 'user' : 'bot'),
+            timestamp: msg.timestamp ? new Date(msg.timestamp) : 
+                      msg.createdAt ? new Date(msg.createdAt) : 
+                      new Date(),
+          };
+        } catch (error) {
+          console.error('❌ Failed to convert message:', msg, error);
+          // Return a safe default message
+          return {
+            id: `error-msg-${Date.now()}`,
+            text: '[Message conversion error]',
+            sender: 'bot' as const,
+            timestamp: new Date(),
+          };
+        }
+      }) || [];
+      
+      console.log('📋 Converted messages:', convertedMessages);
+      
+      // Set the conversation data
+      setMessages(convertedMessages);
+      setCurrentConversationId(conversation.id);
+      
+      // Create session with existing conversation ID
+      if (fullConversation.session_data) {
+        setSession({
+          conversationId: conversation.id,
+          userId: fullConversation.session_data.userId,
+          userName: fullConversation.session_data.userName,
+          environmentId: fullConversation.session_data.environmentId,
+          schemaName: fullConversation.session_data.schemaName,
+          endpoint: fullConversation.session_data.endpoint,
+          expiresIn: 3600,
+          sessionCreated: true,
+          welcomeMessage: fullConversation.session_data.welcomeMessage || '',
+        });
+      }
+      
+      setHistoryDrawerOpen(false);
+      setLoading(false);
+    } catch (error) {
+      console.error('Failed to load conversation:', error);
+      setError('Failed to load conversation');
+    }
+  };
+
+  const deleteConversation = async (conversationId: string) => {
+    try {
+      await apiClient.delete(`/api/chat/conversations/${conversationId}`);
+      await loadConversations(); // Refresh the list
+    } catch (error) {
+      console.error('Failed to delete conversation:', error);
+      setError('Failed to delete conversation');
+    }
+  };
+
+
+
   return (
     <Box sx={{ p: 3, height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column' }}>
-      <Typography variant="h4" gutterBottom>
-        Copilot Studio Chat
-      </Typography>
+      <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
+        <Typography variant="h4">
+          Copilot Studio Chat
+        </Typography>
+        <Box sx={{ display: 'flex', gap: 1 }}>
+          <Button
+            variant="outlined"
+            startIcon={<HistoryIcon />}
+            onClick={() => setHistoryDrawerOpen(true)}
+            size="small"
+          >
+            Chat History
+          </Button>
+          <Button
+            variant="outlined"
+            onClick={createNewConversation}
+            size="small"
+          >
+            New Chat
+          </Button>
+        </Box>
+      </Box>
       
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
         Chat with our Copilot Studio AI assistant to get insights about call center performance, agent metrics, and more.
@@ -408,16 +744,25 @@ export default function ChatbotPage() {
           <>
             {/* Messages List */}
             <Box sx={{ flexGrow: 1, overflow: 'auto', p: 2 }}>
-              <List>
-                {messages.map((message) => (
-                  <ListItem
-                    key={message.id}
-                    sx={{
-                      flexDirection: 'column',
-                      alignItems: message.sender === 'user' ? 'flex-end' : 'flex-start',
-                      px: 0,
-                    }}
-                  >
+              <MessageListErrorBoundary>
+                <List>
+                {messages.map((message) => {
+                  // Safe message rendering with error handling
+                  try {
+                    if (!message || !message.id) {
+                      console.warn('⚠️ Invalid message object:', message);
+                      return null;
+                    }
+
+                    return (
+                      <ListItem
+                        key={message.id}
+                        sx={{
+                          flexDirection: 'column',
+                          alignItems: message.sender === 'user' ? 'flex-end' : 'flex-start',
+                          px: 0,
+                        }}
+                      >
                     <Box
                       sx={{
                         display: 'flex',
@@ -455,12 +800,26 @@ export default function ChatbotPage() {
                           />
                         </Box>
                         <Typography variant="caption" sx={{ opacity: 0.7, mt: 1, display: 'block' }}>
-                          {message.timestamp.toLocaleTimeString()}
+                          {message.timestamp instanceof Date && !isNaN(message.timestamp.getTime()) 
+                            ? message.timestamp.toLocaleTimeString() 
+                            : 'Invalid time'}
                         </Typography>
                       </Paper>
                     </Box>
                   </ListItem>
-                ))}
+                    );
+                  } catch (error) {
+                    console.error('❌ Error rendering message:', message, error);
+                    // Return a safe fallback message item
+                    return (
+                      <ListItem key={message?.id || 'error-msg'}>
+                        <Paper sx={{ p: 2, bgcolor: 'error.light', color: 'error.contrastText' }}>
+                          <Typography variant="body2">Error rendering message</Typography>
+                        </Paper>
+                      </ListItem>
+                    );
+                  }
+                })}
                 
                 {sending && (
                   <ListItem sx={{ flexDirection: 'column', alignItems: 'flex-start', px: 0 }}>
@@ -483,6 +842,7 @@ export default function ChatbotPage() {
                 {/* Invisible element to scroll to */}
                 <div ref={messagesEndRef} />
               </List>
+              </MessageListErrorBoundary>
             </Box>
 
             {/* Quick Questions - positioned above message input */}
@@ -541,6 +901,18 @@ export default function ChatbotPage() {
       <Typography variant="caption" color="text.secondary">
         Powered by Microsoft Copilot Studio • Environment ID: {session?.environmentId?.substring(0, 8)}...
       </Typography>
+
+      <ChatHistoryDrawer
+        open={historyDrawerOpen}
+        onClose={() => setHistoryDrawerOpen(false)}
+        conversations={conversations}
+        loading={loading}
+        error={error}
+        currentConversationId={currentConversationId}
+        onSelectConversation={selectConversation}
+        onDeleteConversation={deleteConversation}
+        onCreateNew={createNewConversation}
+      />
     </Box>
   );
 }

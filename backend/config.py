@@ -54,6 +54,13 @@ class Settings(BaseSettings):
     API_TITLE: str = "Call Center AI Insights API"
     API_VERSION: str = "1.0.0"
     
+    # Azure Cosmos DB Configuration
+    COSMOS_DB_CONNECTION_STRING: Optional[str] = None
+    COSMOS_DB_ACCOUNT_URI: Optional[str] = None  # For DefaultAzureCredential (e.g., https://your-account.documents.azure.com:443/)
+    COSMOS_DB_DATABASE_NAME: str = "CallCenterAI"
+    COSMOS_DB_SESSIONS_CONTAINER: str = "Sessions"
+    COSMOS_DB_MESSAGES_CONTAINER: str = "Messages"
+    
     # Copilot Studio Configuration
     copilot_studio: Optional[CopilotStudioSettings] = None
     
