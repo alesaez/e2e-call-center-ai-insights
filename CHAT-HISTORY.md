@@ -104,7 +104,7 @@ The chat history system uses **two separate containers** in Cosmos DB for optima
 # Azure Cosmos DB Configuration
 COSMOS_DB_ACCOUNT_URI=https://your-account.documents.azure.com:443/
 COSMOS_DB_CONNECTION_STRING=AccountEndpoint=...;AccountKey=...;
-COSMOS_DB_DATABASE_NAME=CallCenterAI
+COSMOS_DB_DATABASE_NAME=ContosoSuites
 COSMOS_DB_SESSIONS_CONTAINER=Sessions
 COSMOS_DB_MESSAGES_CONTAINER=Messages
 ```

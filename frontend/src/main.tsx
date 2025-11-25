@@ -2,7 +2,7 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { MsalProvider } from '@azure/msal-react';
-import { PublicClientApplication, EventType } from '@azure/msal-browser';
+import { PublicClientApplication } from '@azure/msal-browser';
 import App from './App';
 import { msalConfig } from './authConfig';
 
@@ -13,7 +13,7 @@ const msalInstance = new PublicClientApplication(msalConfig);
 await msalInstance.initialize();
 
 // Handle redirect promise to catch redirect response
-msalInstance.handleRedirectPromise().then((response) => {
+msalInstance.handleRedirectPromise().then(() => {
   // Login redirect handled silently
 }).catch((error) => {
   console.error('Authentication error:', error);

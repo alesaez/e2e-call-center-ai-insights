@@ -72,7 +72,7 @@ az account list --output table
    az cosmosdb sql database create \
      --account-name your-cosmosdb-account \
      --resource-group your-resource-group \
-     --name CallCenterAI \
+     --name ContosoSuites \
      --throughput 400
    ```
 
@@ -81,7 +81,7 @@ az account list --output table
    az cosmosdb sql container create \
      --account-name your-cosmosdb-account \
      --resource-group your-resource-group \
-     --database-name CallCenterAI \
+     --database-name ContosoSuites \
      --name Sessions \
      --partition-key-path "/userId"
    ```
@@ -91,7 +91,7 @@ az account list --output table
    az cosmosdb sql container create \
      --account-name your-cosmosdb-account \
      --resource-group your-resource-group \
-     --database-name CallCenterAI \
+     --database-name ContosoSuites \
      --name Messages \
      --partition-key-path "/sessionId"
    ```
@@ -114,7 +114,7 @@ COSMOS_DB_ACCOUNT_URI=https://your-cosmosdb-account.documents.azure.com:443/
 COSMOS_DB_CONNECTION_STRING=AccountEndpoint=https://your-account.documents.azure.com:443/;AccountKey=your-key-here;
 
 # Database and container names - NEW TWO-CONTAINER SETUP
-COSMOS_DB_DATABASE_NAME=CallCenterAI
+COSMOS_DB_DATABASE_NAME=ContosoSuites
 COSMOS_DB_SESSIONS_CONTAINER=Sessions      # Partitioned by /userId
 COSMOS_DB_MESSAGES_CONTAINER=Messages      # Partitioned by /sessionId
 
@@ -204,7 +204,7 @@ python -m uvicorn main:app --reload --port 8000
 Look for successful initialization:
 ```
 INFO:cosmos_service:Using DefaultAzureCredential for Cosmos DB authentication (localhost)
-INFO:cosmos_service:Cosmos DB initialized: CallCenterAI with containers Sessions, Messages
+INFO:cosmos_service:Cosmos DB initialized: ContosoSuites with containers Sessions, Messages
 INFO:cosmos_service:Sessions container ready (partition: /userId)
 INFO:cosmos_service:Messages container ready (partition: /sessionId)
 ```

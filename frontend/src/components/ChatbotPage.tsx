@@ -1,4 +1,6 @@
 import { useEffect, useState, useRef, Component, ErrorInfo, ReactNode } from 'react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { useConversationContext } from '../contexts/ConversationContext';
 import {
   Box,
   Typography,
@@ -22,14 +24,13 @@ import {
   SmartToy as BotIcon,
   Person as PersonIcon,
   QuestionMark as QuestionIcon,
-  History as HistoryIcon,
 } from '@mui/icons-material';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import apiClient from '../services/apiClient';
 import QuestionCards from './QuestionCards';
 import ReferenceProcessor from './ReferenceProcessor';
-import ChatHistoryDrawer, { ConversationSummary } from './ChatHistoryDrawer';
+
 import { predefinedQuestions } from '../config/chatQuestions';
 
 // Error Boundary Component
@@ -261,6 +262,11 @@ const MarkdownMessage = ({ text, isUser }: { text: string; isUser: boolean }) =>
 export default function ChatbotPage() {
   const theme = useTheme();
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const location = useLocation();
+  const navigate = useNavigate();
+  const { refreshConversations, setCurrentConversationId: setContextConversationId } = useConversationContext();
+  const forceNewConversationRef = useRef<boolean>(false); // Track if we should force a new conversation
+  const processedNewConversationRef = useRef<boolean>(false); // Track if we've processed a new conversation request
   const [session, setSession] = useState<CopilotStudioSession | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
@@ -269,16 +275,21 @@ export default function ChatbotPage() {
   const [sending, setSending] = useState(false);
   const [showQuestions, setShowQuestions] = useState(true);
   
-  // Chat history state
-  const [historyDrawerOpen, setHistoryDrawerOpen] = useState(false);
-  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  // Chat history state (managed by sidebar now, but we still need conversations for navigation handling)
+
 
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
+  const [currentConversationTitle, setCurrentConversationTitle] = useState<string | null>(null);
 
   // Auto-scroll to bottom when messages change
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, sending]);
+
+  // Sync conversation ID with context for sidebar active state
+  useEffect(() => {
+    setContextConversationId(currentConversationId);
+  }, [currentConversationId, setContextConversationId]);
 
   // Initialize Copilot Studio session
   useEffect(() => {
@@ -324,21 +335,35 @@ export default function ChatbotPage() {
     if (!session) {
       initializeSession();
     }
-    loadConversations();
   }, [session]);
 
 
 
+  // Handle conversation selection from sidebar navigation
+  useEffect(() => {
+    const navigationState = location.state as { conversationId?: string; newConversation?: boolean } | null;
+    
+    if (navigationState?.conversationId && navigationState.conversationId !== currentConversationId) {
+      // Load the conversation directly by ID instead of searching local array
+      processedNewConversationRef.current = false; // Reset flag for conversation loads
+      loadConversationById(navigationState.conversationId);
+    } else if (navigationState?.newConversation && !processedNewConversationRef.current) {
+      // Handle new conversation request by resetting state
+      processedNewConversationRef.current = true; // Mark as processed
+      resetToNewConversation();
+    }
+  }, [location.state]); // Only depend on location.state changes
+
   // Periodic sync to ensure data integrity (sync every 30 seconds)
   useEffect(() => {
-    if (!currentConversationId) return;
+    if (!currentConversationId || messages.length <= 1) return;
 
     const syncInterval = setInterval(() => {
       syncMessagesWithHistory();
     }, 30000); // 30 seconds
 
     return () => clearInterval(syncInterval);
-  }, [currentConversationId]);
+  }, [currentConversationId, messages.length]);
 
   const sendMessage = async (messageText?: string) => {
     try {
@@ -347,15 +372,23 @@ export default function ChatbotPage() {
 
     // Ensure we have a conversation for message persistence
     let conversationId = currentConversationId;
-    if (!conversationId) {
+    
+    if (!conversationId || forceNewConversationRef.current) {
       try {
+        if (forceNewConversationRef.current) {
+          forceNewConversationRef.current = false; // Reset the flag
+        }
         const newConversationResponse = await apiClient.post('/api/chat/conversations', {
           title: textToSend.length > 50 ? textToSend.substring(0, 50) + '...' : textToSend
         });
         conversationId = newConversationResponse.data.id;
         setCurrentConversationId(conversationId);
-        // Refresh conversation list to show the new conversation in history
-        await loadConversations();
+        
+        // Reset the processed flag since we now have a real conversation
+        processedNewConversationRef.current = false;
+        
+        // Refresh sidebar conversation list
+        refreshConversations?.();
       } catch (err) {
         console.error('Failed to create conversation for message:', err);
         // Continue without persistence if conversation creation fails
@@ -375,11 +408,10 @@ export default function ChatbotPage() {
     setShowQuestions(false); // Hide questions after first message
 
     // Save user message immediately to prevent data loss
-    let userMessageSaved = false;
     if (conversationId) {
       try {
         // Wait for user message to be saved before proceeding
-        userMessageSaved = await saveMessageWithRetry(conversationId, userMessage);
+        await saveMessageWithRetry(conversationId, userMessage);
       } catch (error) {
         // Continue anyway - don't block the chat flow
       }
@@ -457,15 +489,7 @@ export default function ChatbotPage() {
   };
 
   // Chat History Functions
-  const loadConversations = async () => {
-    try {
-      const response = await apiClient.get<ConversationSummary[]>('/api/chat/conversations');
-      setConversations(response.data);
-    } catch (error) {
-      console.error('Failed to load conversations:', error);
-      setError('Failed to load chat history');
-    }
-  };
+
 
   // Robust message saving with retry logic
   const saveMessageWithRetry = async (conversationId: string, message: Message, maxRetries = 3) => {
@@ -502,6 +526,12 @@ export default function ChatbotPage() {
   // Sync local messages with Cosmos DB (optional - for data integrity)
   const syncMessagesWithHistory = async () => {
     if (!currentConversationId || sending) return; // Don't sync while sending
+    
+    // Skip sync if we only have the welcome message (new conversation)
+    if (messages.length <= 1 && messages[0]?.id === 'welcome') {
+
+      return;
+    }
 
     try {
       const response = await apiClient.get<Message[]>(`/api/chat/conversations/${currentConversationId}/messages`);
@@ -509,7 +539,7 @@ export default function ChatbotPage() {
       
       // Validate server response
       if (!Array.isArray(serverMessages)) {
-        console.warn('⚠️ Invalid server response format - skipping sync');
+
         return;
       }
       
@@ -522,7 +552,6 @@ export default function ChatbotPage() {
       
       // Only sync if server has more messages than local (never replace with fewer)
       if (validMessages.length > messages.length) {
-        
         // Convert server messages to safe format before setting
         const safeMessages = validMessages.map((msg: any) => ({
           id: msg.id || `sync-${Date.now()}-${Math.random()}`,
@@ -540,28 +569,51 @@ export default function ChatbotPage() {
     }
   };
 
-  const createNewConversation = async () => {
-    try {
-      const response = await apiClient.post('/api/chat/conversations', {
-        title: 'New Conversation'
-      });
-      
-      // Set the new conversation ID and clear messages
-      setCurrentConversationId(response.data.id);
+  const handleNewConversation = () => {
+    // Reset the processed flag to allow the new conversation request
+    processedNewConversationRef.current = false;
+    // Use the same navigation approach as the left menu
+    navigate('/chatbot', { state: { newConversation: true }, replace: true });
+  };
+
+  const resetToNewConversation = () => {
+    // Force new conversation creation on next message
+    forceNewConversationRef.current = true;
+    
+    // Reset all chat state for a fresh start
+    setCurrentConversationId(null);
+    setCurrentConversationTitle(null);
+    setShowQuestions(true);
+    setError(null);
+    
+    // Re-show welcome message if we have a session
+    if (session) {
+      const welcomeMessage: Message = {
+        id: 'welcome',
+        text: session.welcomeMessage || `Hello! I'm your AI assistant. How can I help you today?`,
+        sender: 'bot',
+        timestamp: new Date(),
+      };
+      setMessages([welcomeMessage]);
+    } else {
+      // If no session, just clear messages
       setMessages([]);
-      setHistoryDrawerOpen(false);
-      await loadConversations(); // Refresh the list
-    } catch (error) {
-      console.error('Failed to create new conversation:', error);
-      // Could add error handling here if needed
     }
   };
 
-  const selectConversation = async (conversation: ConversationSummary) => {
+
+
+
+
+  const loadConversationById = async (conversationId: string) => {
     try {
-      // Load the full conversation
-      const response = await apiClient.get(`/api/chat/conversations/${conversation.id}`);
+      setLoading(true);
+      setError(null);
+      
+      // Load the full conversation directly by ID
+      const response = await apiClient.get(`/api/chat/conversations/${conversationId}`);
       const fullConversation = response.data;
+
       
       // Convert messages to our Message format with safe conversion
       const convertedMessages: Message[] = fullConversation.messages?.map((msg: any) => {
@@ -576,7 +628,6 @@ export default function ChatbotPage() {
           };
         } catch (error) {
           console.error('❌ Failed to convert message:', msg, error);
-          // Return a safe default message
           return {
             id: `error-msg-${Date.now()}`,
             text: '[Message conversion error]',
@@ -586,16 +637,16 @@ export default function ChatbotPage() {
         }
       }) || [];
       
-      console.log('📋 Converted messages:', convertedMessages);
-      
       // Set the conversation data
       setMessages(convertedMessages);
-      setCurrentConversationId(conversation.id);
+      setCurrentConversationId(conversationId);
+      setCurrentConversationTitle(fullConversation.title || 'Untitled Conversation');
+      setShowQuestions(false); // Don't show questions for resumed conversations
       
-      // Create session with existing conversation ID
+      // Create session with existing conversation ID - use the stored Copilot Studio conversation ID
       if (fullConversation.session_data) {
         setSession({
-          conversationId: conversation.id,
+          conversationId: fullConversation.session_data.conversationId, // Use stored Copilot Studio conversation ID
           userId: fullConversation.session_data.userId,
           userName: fullConversation.session_data.userName,
           environmentId: fullConversation.session_data.environmentId,
@@ -605,51 +656,53 @@ export default function ChatbotPage() {
           sessionCreated: true,
           welcomeMessage: fullConversation.session_data.welcomeMessage || '',
         });
+      } else {
+        // If no session data found, create a fresh Copilot Studio session for this conversation
+        console.warn('No session data found for conversation, creating fresh session');
+        try {
+          const sessionResponse = await apiClient.post<CopilotStudioSession>('/api/copilot-studio/token');
+          const sessionData = sessionResponse.data;
+          setSession(sessionData);
+        } catch (sessionError) {
+          console.error('Failed to create fresh session:', sessionError);
+          setError('Failed to create session for this conversation');
+          setLoading(false);
+          return;
+        }
       }
       
-      setHistoryDrawerOpen(false);
       setLoading(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Failed to load conversation:', error);
-      setError('Failed to load conversation');
+      setError(`Failed to load conversation: ${error.response?.data?.detail || error.message}`);
+      setLoading(false);
     }
   };
 
-  const deleteConversation = async (conversationId: string) => {
-    try {
-      await apiClient.delete(`/api/chat/conversations/${conversationId}`);
-      await loadConversations(); // Refresh the list
-    } catch (error) {
-      console.error('Failed to delete conversation:', error);
-      setError('Failed to delete conversation');
-    }
-  };
+
 
 
 
   return (
     <Box sx={{ p: 3, height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column' }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
-        <Typography variant="h4">
-          Copilot Studio Chat
-        </Typography>
-        <Box sx={{ display: 'flex', gap: 1 }}>
-          <Button
-            variant="outlined"
-            startIcon={<HistoryIcon />}
-            onClick={() => setHistoryDrawerOpen(true)}
-            size="small"
-          >
-            Chat History
-          </Button>
-          <Button
-            variant="outlined"
-            onClick={createNewConversation}
-            size="small"
-          >
-            New Chat
-          </Button>
+        <Box>
+          <Typography variant="h4">
+            {currentConversationTitle || 'Copilot Studio Chat'}
+          </Typography>
+          {currentConversationTitle && (
+            <Typography variant="caption" color="text.secondary">
+              Copilot Studio Chat
+            </Typography>
+          )}
         </Box>
+        <Button
+          variant="outlined"
+          onClick={handleNewConversation}
+          size="small"
+        >
+          New Chat
+        </Button>
       </Box>
       
       <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
@@ -664,6 +717,14 @@ export default function ChatbotPage() {
             color="primary"
             variant="outlined"
           />
+          {currentConversationId && messages.length > 1 && (
+            <Chip
+              size="small"
+              label="Conversation Resumed"
+              color="secondary"
+              variant="outlined"
+            />
+          )}
           <Chip
             size="small"
             label={`Schema: ${session.schemaName}`}
@@ -728,7 +789,7 @@ export default function ChatbotPage() {
                   // Safe message rendering with error handling
                   try {
                     if (!message || !message.id) {
-                      console.warn('⚠️ Invalid message object:', message);
+
                       return null;
                     }
 
@@ -880,17 +941,7 @@ export default function ChatbotPage() {
         Powered by Microsoft Copilot Studio • Environment ID: {session?.environmentId?.substring(0, 8)}...
       </Typography>
 
-      <ChatHistoryDrawer
-        open={historyDrawerOpen}
-        onClose={() => setHistoryDrawerOpen(false)}
-        conversations={conversations}
-        loading={loading}
-        error={error}
-        currentConversationId={currentConversationId}
-        onSelectConversation={selectConversation}
-        onDeleteConversation={deleteConversation}
-        onCreateNew={createNewConversation}
-      />
+
     </Box>
   );
 }

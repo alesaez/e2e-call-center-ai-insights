@@ -81,7 +81,7 @@ If you don't have a Cosmos DB account yet:
 
 1. Open [Azure Portal](https://portal.azure.com)
 2. Create a new **Azure Cosmos DB** resource (SQL API)
-3. Create a database named `CallCenterAI`
+3. Create a database named `ContosoSuites`
 4. Create two containers:
    - **Sessions** container with partition key: `/userId`
    - **Messages** container with partition key: `/sessionId`

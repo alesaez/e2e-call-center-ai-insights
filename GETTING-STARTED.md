@@ -100,14 +100,14 @@ Follow this checklist to get your SSO-enabled application up and running.
 
 ### Prerequisites for Chat History
 - [ ] Azure Cosmos DB account (SQL API)
-- [ ] Database named `CallCenterAI`
+- [ ] Database named `ContosoSuites`
 - [ ] Two containers with specific partition keys:
   - `Sessions` container (partition key: `/userId`)
   - `Messages` container (partition key: `/sessionId`)
 
 ### Create Cosmos DB Resources
 - [ ] Go to Azure Portal > Create Cosmos DB account (SQL API)
-- [ ] Create database: `CallCenterAI`
+- [ ] Create database: `ContosoSuites`
 - [ ] Create Sessions container:
   - Name: `Sessions`
   - Partition key: `/userId`
@@ -131,7 +131,7 @@ Follow this checklist to get your SSO-enabled application up and running.
   ```env
   # Cosmos DB Configuration for Chat History
   COSMOS_DB_ACCOUNT_URI=https://your-account.documents.azure.com:443/
-  COSMOS_DB_DATABASE_NAME=CallCenterAI
+  COSMOS_DB_DATABASE_NAME=ContosoSuites
   COSMOS_DB_SESSIONS_CONTAINER=Sessions
   COSMOS_DB_MESSAGES_CONTAINER=Messages
   

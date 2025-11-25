@@ -10,11 +10,8 @@ export default function LoginPage() {
   const hasRedirected = useRef(false);
 
   useEffect(() => {
-    console.log('LoginPage - Accounts:', accounts.length, 'InProgress:', inProgress, 'HasRedirected:', hasRedirected.current);
-    
     // If already authenticated and not in the middle of interaction, redirect to dashboard
     if (accounts.length > 0 && inProgress === InteractionStatus.None && !hasRedirected.current) {
-      console.log('User already authenticated, redirecting to dashboard');
       hasRedirected.current = true;
       navigate('/dashboard', { replace: true });
     }
@@ -22,7 +19,6 @@ export default function LoginPage() {
 
   const handleLogin = async () => {
     try {
-      console.log('Starting login redirect...');
       await instance.loginRedirect(loginRequest);
     } catch (error) {
       console.error('Login failed:', error);

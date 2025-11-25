@@ -22,7 +22,7 @@ azure-identity==1.19.0
 azure-cosmos==4.7.0
 
 # Microsoft Copilot Studio integration
-microsoft-agents-activity==0.5.3
+microsoft-agents-activity==0.6.0
 microsoft-agents-copilotstudio-client==0.5.3
 microsoft-agents-hosting-core==0.5.3
 

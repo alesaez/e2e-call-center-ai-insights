@@ -32,9 +32,13 @@ from chat_models import (
     AddMessageRequest
 )
 import uuid
-from microsoft_agents.copilotstudio.client import CopilotClient
-from microsoft_agents.copilotstudio.client.connection_settings import ConnectionSettings
 from microsoft_agents.activity import Activity
+
+from microsoft_agents.activity import ActivityTypes, load_configuration_from_env
+from microsoft_agents.copilotstudio.client import (
+    ConnectionSettings,
+    CopilotClient,
+)
 from msal import ConfidentialClientApplication
 from cosmos_service import CosmosDBService
 
@@ -357,6 +361,7 @@ async def get_copilot_studio_token(
                 raise Exception(f"Failed to acquire token: {error_msg}")
             
             # Create client instance with connection settings and token
+            print(f"Access token backend: {token_result['access_token']}")
             client = CopilotClient(connection_settings, token_result["access_token"])
         
         # Start conversation - returns an async generator
@@ -458,20 +463,24 @@ async def send_message_to_copilot(
         # Send message using ask_question method - it returns an async generator
         response_text = ""
         activities = []
-        
+                      
         async for activity in client.ask_question(
             conversation_id=conversation_id,
             question=message_text
         ):
             activities.append(activity)
-            # Collect text from bot activities - activity is a Pydantic model
-            if hasattr(activity, 'from_property') and hasattr(activity.from_property, 'role'):
-                if activity.from_property.role == 'bot' and hasattr(activity, 'text'):
-                    response_text = activity.text
-            # Fallback: try as dict
-            elif isinstance(activity, dict):
-                if activity.get('from', {}).get('role') == 'bot' and activity.get('text'):
-                    response_text = activity.get('text', '')
+            logger.info(f"Received activity [ {activity.type} ]: {activity}")
+            if activity.type == ActivityTypes.message:
+                response_text = activity.text
+                            
+            # # Collect text from bot activities - activity is a Pydantic model
+            # if hasattr(activity, 'from_property') and hasattr(activity.from_property, 'role'):
+            #     if activity.from_property.role == 'bot' and hasattr(activity, 'text'):
+            #         response_text = activity.text
+            # # Fallback: try as dict
+            # elif isinstance(activity, dict):
+            #     if activity.get('from', {}).get('role') == 'bot' and activity.get('text'):
+            #         response_text = activity.get('text', '')
         
         # If no response text was collected, use a default message
         if not response_text:
