@@ -12,7 +12,6 @@ import {
   ListItemButton,
   ListItemIcon,
   ListItemText,
-  Avatar,
   useTheme,
   useMediaQuery,
   Collapse,
@@ -23,9 +22,7 @@ import {
   Menu as MenuIcon,
   Dashboard as DashboardIcon,
   Chat as ChatIcon,
-  Settings as SettingsIcon,
   ChevronLeft as ChevronLeftIcon,
-  Logout as LogoutIcon,
   ExpandLess,
   ExpandMore,
   History as HistoryIcon,
@@ -37,6 +34,7 @@ import { useMsal } from '@azure/msal-react';
 import { TenantConfig } from '../theme/theme';
 import apiClient from '../services/apiClient';
 import { ConversationProvider, useConversationContext } from '../contexts/ConversationContext';
+import UserMenu from './UserMenu';
 
 // Chat History types (matching ChatHistoryDrawer)
 interface ConversationSummary {
@@ -73,7 +71,7 @@ function MainLayoutContent({ children, tenantConfig, refreshTrigger }: MainLayou
   const [showAllConversations, setShowAllConversations] = useState(false);
   const navigate = useNavigate();
   const location = useLocation();
-  const { instance, accounts } = useMsal();
+  const { accounts } = useMsal();
   const { currentConversationId: contextConversationId, setCurrentConversationId: setContextConversationId } = useConversationContext();
 
   // Auto-expand Chat History submenu when on chatbot page
@@ -99,12 +97,6 @@ function MainLayoutContent({ children, tenantConfig, refreshTrigger }: MainLayou
     } else {
       setDesktopOpen(!desktopOpen);
     }
-  };
-
-  const handleLogout = () => {
-    instance.logoutRedirect({
-      account: accounts[0],
-    });
   };
 
   // Load conversations when chat submenu is opened
@@ -160,7 +152,6 @@ function MainLayoutContent({ children, tenantConfig, refreshTrigger }: MainLayou
 
   const menuItems = [
     { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard' },
-    { text: 'Settings', icon: <SettingsIcon />, path: '/settings' },
   ];
 
   const drawer = (
@@ -456,48 +447,6 @@ function MainLayoutContent({ children, tenantConfig, refreshTrigger }: MainLayou
           </List>
         </Collapse>
       </List>
-
-      <Divider />
-
-      {/* User Section */}
-      <Box sx={{ p: 2 }}>
-        <Box sx={{ display: 'flex', alignItems: 'center', mb: 2 }}>
-          <Avatar
-            sx={{
-              bgcolor: 'primary.main',
-              width: 36,
-              height: 36,
-              fontSize: '0.9rem',
-            }}
-          >
-            {accounts[0]?.name?.charAt(0) || 'U'}
-          </Avatar>
-          <Box sx={{ ml: 1.5, flexGrow: 1, minWidth: 0 }}>
-            <Typography variant="body2" fontWeight={600} noWrap>
-              {accounts[0]?.name || 'User'}
-            </Typography>
-            <Typography variant="caption" color="text.secondary" noWrap>
-              {accounts[0]?.username}
-            </Typography>
-          </Box>
-        </Box>
-        <ListItemButton
-          onClick={handleLogout}
-          sx={{
-            borderRadius: 1,
-            color: 'error.main',
-            '&:hover': {
-              bgcolor: 'error.light',
-              color: 'error.dark',
-            },
-          }}
-        >
-          <ListItemIcon sx={{ color: 'inherit', minWidth: 40 }}>
-            <LogoutIcon />
-          </ListItemIcon>
-          <ListItemText primary="Sign Out" />
-        </ListItemButton>
-      </Box>
     </Box>
   );
 
@@ -528,9 +477,16 @@ function MainLayoutContent({ children, tenantConfig, refreshTrigger }: MainLayou
           >
             {(isMobile ? mobileOpen : desktopOpen) ? <ChevronLeftIcon /> : <MenuIcon />}
           </IconButton>
-          <Typography variant="h6" noWrap component="div">
+          <Typography variant="h6" noWrap component="div" sx={{ flexGrow: 1 }}>
             {tenantConfig.name}
           </Typography>
+          
+          {/* User Menu in Header */}
+          <UserMenu 
+            userInitials={accounts[0]?.name?.charAt(0) || 'U'}
+            userName={accounts[0]?.name || 'User'}
+            userEmail={accounts[0]?.username || ''}
+          />
         </Toolbar>
       </AppBar>
 
