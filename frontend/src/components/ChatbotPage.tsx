@@ -17,6 +17,9 @@ import {
   Stack,
   IconButton,
   Tooltip,
+  Card,
+  CardContent,
+  Grid,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
 import {
@@ -89,6 +92,13 @@ interface Message {
   text: string;
   sender: 'user' | 'bot';
   timestamp: Date;
+  attachments?: MessageAttachment[];
+}
+
+interface MessageAttachment {
+  contentType: string;
+  content?: any;
+  name?: string;
 }
 
 // Markdown renderer component with custom styling
@@ -259,6 +269,135 @@ const MarkdownMessage = ({ text, isUser }: { text: string; isUser: boolean }) =>
   );
 };
 
+// Adaptive Card renderer component
+const AdaptiveCardRenderer = ({ 
+  card, 
+  onAction 
+}: { 
+  card: any; 
+  onAction: (action: string, data: any) => void;
+}) => {
+  const theme = useTheme();
+
+  // Render TextBlock elements
+  const renderTextBlock = (element: any, index: number) => {
+    const variant = element.size === 'medium' ? 'body1' : 
+                   element.size === 'large' ? 'h6' : 'body2';
+    const fontWeight = element.weight === 'bolder' ? 'bold' : 'normal';
+    const color = element.isSubtle ? 'text.secondary' : 'text.primary';
+
+    return (
+      <Typography
+        key={index}
+        variant={variant}
+        sx={{
+          fontWeight,
+          color,
+          mb: 1,
+          whiteSpace: 'pre-wrap',
+        }}
+      >
+        {element.text}
+      </Typography>
+    );
+  };
+
+  // Render Image elements
+  const renderImage = (element: any, index: number) => (
+    <Box
+      key={index}
+      component="img"
+      src={element.url}
+      alt={element.altText || 'Image'}
+      sx={{
+        width: element.width || 'auto',
+        height: element.height || 'auto',
+        maxWidth: element.size === 'small' ? 24 : 
+                 element.size === 'medium' ? 48 : 'auto',
+        mr: 1,
+      }}
+    />
+  );
+
+  // Render ColumnSet elements
+  const renderColumnSet = (element: any, index: number) => (
+    <Grid container key={index} spacing={1} sx={{ mb: 1 }}>
+      {element.columns.map((column: any, colIndex: number) => (
+        <Grid 
+          item 
+          key={colIndex}
+          xs={column.width === 'auto' ? 'auto' : 
+              column.width === 'stretch' ? true : 
+              parseInt(column.width) || 12}
+        >
+          {column.items.map((item: any, itemIndex: number) => 
+            renderElement(item, itemIndex)
+          )}
+        </Grid>
+      ))}
+    </Grid>
+  );
+
+  // Render ActionSet elements
+  const renderActionSet = (element: any, index: number) => (
+    <Box key={index} sx={{ display: 'flex', gap: 1, mb: 1 }}>
+      {element.actions.map((action: any, actionIndex: number) => (
+        <Button
+          key={actionIndex}
+          variant={action.style === 'positive' ? 'contained' : 'outlined'}
+          color={action.style === 'positive' ? 'primary' : 'inherit'}
+          size="small"
+          onClick={() => {
+            console.log('🔘 Button clicked:', { actionType: action.type, actionData: action.data });
+            onAction(action.type, action.data);
+          }}
+          sx={{
+            textTransform: 'none',
+            borderRadius: 2,
+            px: 2,
+          }}
+        >
+          {action.title}
+        </Button>
+      ))}
+    </Box>
+  );
+
+  // Main element renderer
+  const renderElement = (element: any, index: number) => {
+    switch (element.type) {
+      case 'TextBlock':
+        return renderTextBlock(element, index);
+      case 'Image':
+        return renderImage(element, index);
+      case 'ColumnSet':
+        return renderColumnSet(element, index);
+      case 'ActionSet':
+        return renderActionSet(element, index);
+      default:
+        return null;
+    }
+  };
+
+  return (
+    <Card 
+      variant="outlined" 
+      sx={{ 
+        maxWidth: '100%',
+        borderRadius: 2,
+        border: `1px solid ${theme.palette.divider}`,
+        boxShadow: 'none',
+      }}
+    >
+      <CardContent sx={{ p: 2, '&:last-child': { pb: 2 } }}>
+        {card.body?.map((element: any, index: number) => 
+          renderElement(element, index)
+        )}
+      </CardContent>
+    </Card>
+  );
+};
+
 export default function ChatbotPage() {
   const theme = useTheme();
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -365,6 +504,149 @@ export default function ChatbotPage() {
     return () => clearInterval(syncInterval);
   }, [currentConversationId, messages.length]);
 
+  // Handle Adaptive Card actions (like button clicks)
+  const handleAdaptiveCardAction = async (actionType: string, actionData: any) => {
+    console.log('🔘 Adaptive Card Action Triggered:', { 
+      actionType, 
+      actionData, 
+      session: session ? 'exists' : 'missing', 
+      sessionId: session?.conversationId,
+      currentConversationId, 
+      sending 
+    });
+    
+    if (!session) {
+      console.log('❌ Action blocked - Missing session:', { 
+        hasSession: !!session
+      });
+      
+      // Show user-friendly message
+      alert('Cannot process action: Chat session not properly initialized. Please refresh and try again.');
+      return;
+    }
+
+    // Ensure we have a conversation for the action (similar to sendMessage logic)
+    let conversationId = currentConversationId;
+    
+    if (!conversationId) {
+      console.log('🆕 Creating new conversation for Adaptive Card action');
+      try {
+        const newConversationResponse = await apiClient.post('/api/chat/conversations', {
+          title: `Card Action: ${actionType || 'Unknown'}`
+        });
+        conversationId = newConversationResponse.data.id;
+        setCurrentConversationId(conversationId);
+        
+        // Refresh sidebar conversation list
+        refreshConversations?.();
+        
+        console.log('✅ Created new conversation for card action:', conversationId);
+      } catch (err: any) {
+        console.error('❌ Failed to create conversation for card action:', err);
+        alert('Failed to create conversation for this action. Please try again.');
+        return;
+      }
+    }
+    
+    if (sending) {
+      console.log('⏳ Action blocked - Already sending message');
+      alert('Please wait for the current action to complete.');
+      return;
+    }
+    
+    try {
+      setSending(true);
+      console.log('✅ Processing action:', actionType);
+      
+      if (actionType === 'Action.Submit') {
+        console.log('✅ Processing Action.Submit with data:', actionData);
+        
+        // Create a user message showing the action taken
+        const actionMessage: Message = {
+          id: Date.now().toString(),
+          text: `User selected: ${actionData.action || 'Unknown Action'}`,
+          sender: 'user',
+          timestamp: new Date(),
+        };
+        
+        setMessages(prev => [...prev, actionMessage]);
+        
+        console.log('🚀 Sending card response to backend...');
+        
+        try {
+          // Send InvokeResponse activity to Copilot Studio (following Node.js pattern)
+          const response = await apiClient.post('/api/copilot-studio/send-card-response', {
+            conversationId: session.conversationId,
+            userId: session.userId,
+            actionData: actionData,
+            activityType: 'invokeResponse'
+          });
+
+          console.log('🔄 Also saving to local conversation:', conversationId);
+          
+          console.log('✅ Backend response received:', response.data);
+
+          if (response.data.response || response.data.attachments) {
+            const botResponse: Message = {
+              id: (Date.now() + 1).toString(),
+              text: response.data.response || response.data.text || '',
+              sender: 'bot',
+              timestamp: new Date(),
+              attachments: response.data.attachments || [],
+            };
+            
+            setMessages(prev => [...prev, botResponse]);
+            
+            // Save both messages
+            if (conversationId) {
+              console.log(`Saving action message to conversation: ${conversationId}`);
+              await saveMessageWithRetry(conversationId, actionMessage);
+              console.log(`Saving bot response to conversation: ${conversationId}`);
+              await saveMessageWithRetry(conversationId, botResponse);
+              console.log(`Successfully saved both messages to conversation: ${conversationId}`);
+            } else {
+              console.warn('No conversation ID for saving action messages');
+            }
+          }
+        } catch (backendError: any) {
+          console.error('❌ Backend call failed:', backendError);
+          
+          // Add fallback response if backend fails
+          const fallbackResponse: Message = {
+            id: (Date.now() + 2).toString(),
+            text: `I received your selection "${actionData.action || 'Unknown'}" but couldn't process it fully due to a connection issue. Please try again.`,
+            sender: 'bot',
+            timestamp: new Date(),
+          };
+          
+          setMessages(prev => [...prev, fallbackResponse]);
+          
+          // Save the action message even if backend fails
+          if (conversationId) {
+            try {
+              await saveMessageWithRetry(conversationId, actionMessage);
+              await saveMessageWithRetry(conversationId, fallbackResponse);
+            } catch (saveError) {
+              console.error('❌ Failed to save messages after backend error:', saveError);
+            }
+          }
+        }
+      }
+    } catch (error: any) {
+      console.error('Error handling adaptive card action:', error);
+      // Show error message to user
+      const errorMessage: Message = {
+        id: Date.now().toString(),
+        text: `Error submitting card data: ${error?.message ?? 'Unknown error'}`,
+        sender: 'bot',
+        timestamp: new Date(),
+      };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setSending(false);
+    }
+  };
+
   const sendMessage = async (messageText?: string) => {
     try {
       const textToSend = messageText || inputText.trim();
@@ -389,9 +671,11 @@ export default function ChatbotPage() {
         
         // Refresh sidebar conversation list
         refreshConversations?.();
-      } catch (err) {
+      } catch (err: any) {
         console.error('Failed to create conversation for message:', err);
+        console.error('Error details:', err.response?.data || err.message);
         // Continue without persistence if conversation creation fails
+        conversationId = null; // Ensure we don't use a stale ID
       }
     }
 
@@ -411,10 +695,15 @@ export default function ChatbotPage() {
     if (conversationId) {
       try {
         // Wait for user message to be saved before proceeding
+        console.log(`Attempting to save user message to conversation: ${conversationId}`);
         await saveMessageWithRetry(conversationId, userMessage);
+        console.log(`Successfully saved user message to conversation: ${conversationId}`);
       } catch (error) {
+        console.error(`Failed to save user message to conversation ${conversationId}:`, error);
         // Continue anyway - don't block the chat flow
       }
+    } else {
+      console.warn('No conversation ID available for saving user message');
     }
 
     try {
@@ -427,9 +716,10 @@ export default function ChatbotPage() {
 
       const botResponse: Message = {
         id: (Date.now() + 1).toString(),
-        text: response.data.response || 'I received your message.',
+        text: response.data.response || response.data.text || 'I received your message.',
         sender: 'bot',
         timestamp: new Date(),
+        attachments: response.data.attachments || [],
       };
       
       setMessages(prev => [...prev, botResponse]);
@@ -495,6 +785,14 @@ export default function ChatbotPage() {
   const saveMessageWithRetry = async (conversationId: string, message: Message, maxRetries = 3) => {
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
+        // Transform attachments to match backend MessageAttachment model
+        const transformedAttachments = (message.attachments || []).map(attachment => ({
+          kind: attachment.contentType?.includes('card') ? 'document' : 'file',
+          uri: `data:${attachment.contentType};base64,${btoa(JSON.stringify(attachment.content || {}))}`,
+          mime: attachment.contentType,
+          title: attachment.name
+        }));
+
         // Send in the format expected by the backend ChatMessage model
         const payload = {
           id: message.id,
@@ -505,12 +803,21 @@ export default function ChatbotPage() {
           timestamp: message.timestamp.toISOString(), // Legacy field
           createdAt: message.timestamp.toISOString(), // New field
           sessionId: conversationId,    // New field (required for new schema)
-          type: "message"               // New field
+          type: "message",              // New field
+          attachments: transformedAttachments // Transform attachments for backend
         };
         
-        await apiClient.post(`/api/chat/conversations/${conversationId}/messages`, payload);
+        const response = await apiClient.post(`/api/chat/conversations/${conversationId}/messages`, payload);
+        console.log(`Message saved successfully. Status: ${response.status}`);
         return true;
-      } catch (error) {
+      } catch (error: any) {
+        console.error(`Attempt ${attempt}/${maxRetries} failed to save message to conversation ${conversationId}:`, {
+          status: error.response?.status,
+          statusText: error.response?.statusText,
+          data: error.response?.data,
+          message: error.message
+        });
+        
         if (attempt === maxRetries) {
           // Store failed message for later retry
           console.error('Failed to save message after all retries:', error);
@@ -625,6 +932,7 @@ export default function ChatbotPage() {
             timestamp: msg.timestamp ? new Date(msg.timestamp) : 
                       msg.createdAt ? new Date(msg.createdAt) : 
                       new Date(),
+            attachments: msg.attachments || [],
           };
         } catch (error) {
           console.error('❌ Failed to convert message:', msg, error);
@@ -633,6 +941,7 @@ export default function ChatbotPage() {
             text: '[Message conversion error]',
             sender: 'bot' as const,
             timestamp: new Date(),
+            attachments: [],
           };
         }
       }) || [];
@@ -833,10 +1142,28 @@ export default function ChatbotPage() {
                         }}
                       >
                         <Box sx={{ wordBreak: 'break-word' }}>
-                          <MarkdownMessage 
-                            text={message.text} 
-                            isUser={message.sender === 'user'}
-                          />
+                          {/* Render text content if available */}
+                          {message.text && (
+                            <MarkdownMessage 
+                              text={message.text} 
+                              isUser={message.sender === 'user'}
+                            />
+                          )}
+                          
+                          {/* Render Adaptive Cards if available */}
+                          {message.attachments?.map((attachment, index) => {
+                            if (attachment.contentType === 'application/vnd.microsoft.card.adaptive') {
+                              return (
+                                <Box key={index} sx={{ mt: message.text ? 1 : 0 }}>
+                                  <AdaptiveCardRenderer
+                                    card={attachment.content}
+                                    onAction={handleAdaptiveCardAction}
+                                  />
+                                </Box>
+                              );
+                            }
+                            return null;
+                          })}
                         </Box>
                         <Typography variant="caption" sx={{ opacity: 0.7, mt: 1, display: 'block' }}>
                           {message.timestamp instanceof Date && !isNaN(message.timestamp.getTime()) 

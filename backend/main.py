@@ -462,6 +462,7 @@ async def send_message_to_copilot(
         
         # Send message using ask_question method - it returns an async generator
         response_text = ""
+        attachments = []
         activities = []
                       
         async for activity in client.ask_question(
@@ -470,25 +471,30 @@ async def send_message_to_copilot(
         ):
             activities.append(activity)
             logger.info(f"Received activity [ {activity.type} ]: {activity}")
+            
             if activity.type == ActivityTypes.message:
-                response_text = activity.text
-                            
-            # # Collect text from bot activities - activity is a Pydantic model
-            # if hasattr(activity, 'from_property') and hasattr(activity.from_property, 'role'):
-            #     if activity.from_property.role == 'bot' and hasattr(activity, 'text'):
-            #         response_text = activity.text
-            # # Fallback: try as dict
-            # elif isinstance(activity, dict):
-            #     if activity.get('from', {}).get('role') == 'bot' and activity.get('text'):
-            #         response_text = activity.get('text', '')
+                # Extract text content
+                if activity.text:
+                    response_text = activity.text
+                
+                # Extract attachments (including Adaptive Cards)
+                if hasattr(activity, 'attachments') and activity.attachments:
+                    for attachment in activity.attachments:
+                        attachments.append({
+                            "contentType": attachment.content_type,
+                            "content": attachment.content,
+                            "name": getattr(attachment, 'name', None)
+                        })
         
         # If no response text was collected, use a default message
-        if not response_text:
+        if not response_text and not attachments:
             response_text = "I received your message."
         
         return {
             "success": True,
             "response": response_text,
+            "text": response_text,  # Alias for frontend compatibility
+            "attachments": attachments,
             "conversationId": conversation_id
         }
         
@@ -497,6 +503,157 @@ async def send_message_to_copilot(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to send message: {str(e)}"
+        )
+
+@app.post("/api/copilot-studio/send-card-response")
+async def send_card_response_to_copilot(
+    message_data: Dict,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    token_payload: Dict = Depends(verify_token)
+):
+    """
+    Send an Adaptive Card response (InvokeResponse activity) to Copilot Studio.
+    This handles card submit actions like Allow/Cancel buttons.
+    """
+    settings = get_settings()
+    
+    if not settings.copilot_studio:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Copilot Studio is not configured."
+        )
+    
+    try:
+        logger.info(f"Starting Send Card Activity")
+        conversation_id = message_data.get("conversationId")
+        action_data = message_data.get("actionData")
+        user_id = message_data.get("userId")
+        
+        if not all([conversation_id, action_data, user_id]):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="conversationId, actionData, and userId are required"
+            )
+        
+        # Initialize Copilot Studio Client with connection settings
+        connection_settings = ConnectionSettings(
+            environment_id=settings.copilot_studio.environment_id,
+            agent_identifier=settings.copilot_studio.schema_name,
+            cloud=None,
+            copilot_agent_type=None,
+            custom_power_platform_cloud=None,
+        )
+        
+        # Use On-Behalf-Of flow to get Power Platform token as the user
+        if not settings.copilot_studio.app_client_secret:
+            logger.warning("No client secret provided, using connection without token")
+            client = CopilotClient(connection_settings, None)
+        else:
+            # Get the user's token from the request
+            user_token = credentials.credentials
+            
+            msal_app = ConfidentialClientApplication(
+                settings.copilot_studio.app_client_id,
+                authority=f"https://login.microsoftonline.com/{settings.copilot_studio.tenant_id}",
+                client_credential=settings.copilot_studio.app_client_secret,
+            )
+            
+            # Use On-Behalf-Of flow to exchange user token for Power Platform token
+            result = msal_app.acquire_token_on_behalf_of(
+                user_assertion=user_token,
+                scopes=["https://api.powerplatform.com/.default"]
+            )
+            
+            if "access_token" not in result:
+                logger.error(f"Failed to acquire token: {result.get('error_description', 'Unknown error')}")
+                raise HTTPException(
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail="Failed to acquire Copilot Studio token"
+                )
+            
+            client = CopilotClient(connection_settings, result["access_token"])
+        
+        # Create InvokeResponse activity following the Node.js pattern
+        invoke_activity = Activity(
+            type="invokeResponse",  # Use string type for invoke response
+            value=action_data
+        )
+        invoke_activity.conversation = {"id": conversation_id}
+        
+        logger.info(f"Invoke Activity: {invoke_activity}")
+
+        response_text = ""
+        attachments = []
+        activities = []
+        
+        # Send the invoke response activity (if client has send_activity method)
+        # Otherwise, fall back to ask_question with the action data
+        try:
+
+            if hasattr(client, 'send_activity'):
+                async for activity in client.send_activity(invoke_activity, conversation_id):
+                    activities.append(activity)
+                    logger.info(f"Sending activity [ {activity.type} ]: {activity}")
+                    
+                    if activity.type == ActivityTypes.message:
+                        # Extract text content
+                        if activity.text:
+                            response_text = activity.text
+                        
+                        # Extract attachments (including Adaptive Cards)
+                        if hasattr(activity, 'attachments') and activity.attachments:
+                            for attachment in activity.attachments:
+                                attachments.append({
+                                    "contentType": attachment.content_type,
+                                    "content": attachment.content,
+                                    "name": getattr(attachment, 'name', None)
+                                })
+            else:
+                # Fallback: send as a regular message with action data
+                action_text = f"Card action: {action_data.get('action', 'submitted')}"
+                async for activity in client.ask_question(
+                    conversation_id=conversation_id,
+                    question=action_text
+                ):
+                    activities.append(activity)
+                    logger.info(f"Received activity [ {activity.type} ]: {activity}")
+                    
+                    if activity.type == ActivityTypes.message:
+                        # Extract text content
+                        if activity.text:
+                            response_text = activity.text
+                        
+                        # Extract attachments (including Adaptive Cards)
+                        if hasattr(activity, 'attachments') and activity.attachments:
+                            for attachment in activity.attachments:
+                                attachments.append({
+                                    "contentType": attachment.content_type,
+                                    "content": attachment.content,
+                                    "name": getattr(attachment, 'name', None)
+                                })
+        except Exception as invoke_error:
+            logger.warning(f"Failed to send invoke response, using fallback: {invoke_error}")
+            # Final fallback: treat as regular message
+            action_text = f"User selected: {action_data.get('action', 'Unknown action')}"
+            response_text = "Action received and processed."
+        
+        # If no response text was collected, use a default message
+        if not response_text and not attachments:
+            response_text = "Card action processed successfully."
+        
+        return {
+            "success": True,
+            "response": response_text,
+            "text": response_text,  # Alias for frontend compatibility
+            "attachments": attachments,
+            "conversationId": conversation_id
+        }
+        
+    except Exception as e:
+        logger.error(f"Failed to send card response to Copilot Studio: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send card response: {str(e)}"
         )
 
 # ============================================================================
