@@ -32,9 +32,8 @@ from chat_models import (
     AddMessageRequest
 )
 import uuid
-from microsoft_agents.activity import Activity
 
-from microsoft_agents.activity import ActivityTypes, load_configuration_from_env
+from microsoft_agents.activity import Activity, ActivityTypes, ConversationAccount, CardAction, load_configuration_from_env
 from microsoft_agents.copilotstudio.client import (
     ConnectionSettings,
     CopilotClient,
@@ -524,7 +523,6 @@ async def send_card_response_to_copilot(
         )
     
     try:
-        logger.info(f"Starting Send Card Activity")
         conversation_id = message_data.get("conversationId")
         action_data = message_data.get("actionData")
         user_id = message_data.get("userId")
@@ -575,11 +573,11 @@ async def send_card_response_to_copilot(
         
         # Create InvokeResponse activity following the Node.js pattern
         invoke_activity = Activity(
-            type="invokeResponse",  # Use string type for invoke response
+            type=ActivityTypes.invoke_response,
             value=action_data
         )
-        invoke_activity.conversation = {"id": conversation_id}
-        
+
+        invoke_activity.conversation = ConversationAccount(id=conversation_id)
         logger.info(f"Invoke Activity: {invoke_activity}")
 
         response_text = ""
@@ -589,9 +587,9 @@ async def send_card_response_to_copilot(
         # Send the invoke response activity (if client has send_activity method)
         # Otherwise, fall back to ask_question with the action data
         try:
-
-            if hasattr(client, 'send_activity'):
-                async for activity in client.send_activity(invoke_activity, conversation_id):
+            if hasattr(client, 'ask_question_with_activity'):
+                logger.info(" >>>>>>>>>>>>>>> Sending invoke activity with ask_question_with_activity")
+                async for activity in client.ask_question_with_activity(invoke_activity):
                     activities.append(activity)
                     logger.info(f"Sending activity [ {activity.type} ]: {activity}")
                     
@@ -609,6 +607,8 @@ async def send_card_response_to_copilot(
                                     "name": getattr(attachment, 'name', None)
                                 })
             else:
+                
+                logger.info(" >>>>>>>>>>>>>>> Sending as regular message")
                 # Fallback: send as a regular message with action data
                 action_text = f"Card action: {action_data.get('action', 'submitted')}"
                 async for activity in client.ask_question(
@@ -616,7 +616,7 @@ async def send_card_response_to_copilot(
                     question=action_text
                 ):
                     activities.append(activity)
-                    logger.info(f"Received activity [ {activity.type} ]: {activity}")
+                    logger.info(f"Received regular activity [ {activity.type} ]: {activity}")
                     
                     if activity.type == ActivityTypes.message:
                         # Extract text content
