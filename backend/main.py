@@ -469,9 +469,17 @@ async def send_message_to_copilot(
             question=message_text
         ):
             activities.append(activity)
-            logger.info(f"Received activity [ {activity.type} ]: {activity}")
-            
-            if activity.type == ActivityTypes.message:
+
+            if activity.type == ActivityTypes.typing:
+                logger.info(f"ACTIVITY [ {activity.type} ]: {activity.text}")
+                continue
+
+            elif activity.type == ActivityTypes.event:
+                logger.info(f"ACTIVITY [ {activity.type} ]: {activity.value}")
+                continue
+                
+            elif activity.type == ActivityTypes.message:
+                logger.info(f"ACTIVITY [ {activity.type} ]: {activity.text}")
                 # Extract text content
                 if activity.text:
                     response_text = activity.text
@@ -485,6 +493,9 @@ async def send_message_to_copilot(
                             "name": getattr(attachment, 'name', None)
                         })
         
+            else:
+                logger.info(f"UNKNOWN ACTIVITY [ {activity.type} ]: {activity}")
+
         # If no response text was collected, use a default message
         if not response_text and not attachments:
             response_text = "I received your message."
