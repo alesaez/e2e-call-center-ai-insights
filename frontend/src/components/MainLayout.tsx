@@ -34,6 +34,7 @@ import { useMsal } from '@azure/msal-react';
 import { TenantConfig } from '../theme/theme';
 import apiClient from '../services/apiClient';
 import { ConversationProvider, useConversationContext } from '../contexts/ConversationContext';
+import { getLogoSrc } from '../config/tenantConfig';
 import UserMenu from './UserMenu';
 
 // Chat History types (matching ChatHistoryDrawer)
@@ -166,11 +167,11 @@ function MainLayoutContent({ children, tenantConfig, refreshTrigger }: MainLayou
           minHeight: 64,
         }}
       >
-        {tenantConfig.logoUrl ? (
+        {getLogoSrc(tenantConfig) ? (
           <img
-            src={tenantConfig.logoUrl}
+            src={getLogoSrc(tenantConfig)}
             alt={tenantConfig.name}
-            style={{ maxHeight: 40, maxWidth: '100%' }}
+            style={{ maxHeight: 40, maxWidth: '100%', objectFit: 'contain' }}
           />
         ) : (
           <Box

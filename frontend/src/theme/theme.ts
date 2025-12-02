@@ -1,22 +1,8 @@
 import { createTheme, ThemeOptions } from '@mui/material/styles';
+import { tenantConfig as defaultTenantConfig, type TenantConfig } from '../config/tenantConfig';
 
-// Tenant configuration interface for white labeling
-export interface TenantConfig {
-  tenantId: string;
-  name: string;
-  logo?: string;
-  primaryColor: string;
-  secondaryColor: string;
-  logoUrl?: string;
-}
-
-// Default tenant configuration
-export const defaultTenantConfig: TenantConfig = {
-  tenantId: 'default',
-  name: 'Call Center AI Insights',
-  primaryColor: '#0078d4', // Microsoft blue
-  secondaryColor: '#2b88d8', // Lighter blue
-};
+// Re-export TenantConfig type for backward compatibility
+export type { TenantConfig };
 
 // Create Material-UI theme based on tenant configuration
 export const createAppTheme = (tenantConfig: TenantConfig = defaultTenantConfig) => {
@@ -75,13 +61,13 @@ export const createAppTheme = (tenantConfig: TenantConfig = defaultTenantConfig)
   return createTheme(themeOptions);
 };
 
-// Mock function to fetch tenant configuration
-// In production, this would fetch from your backend API
+// Function to fetch tenant configuration
+// Loads from environment variables (can be extended to fetch from backend API)
 export const getTenantConfig = async (_tenantId?: string): Promise<TenantConfig> => {
-  // Simulate API call
-  await new Promise(resolve => setTimeout(resolve, 100));
-  
-  // Return default config for now
-  // In production, fetch from backend based on authenticated user's tenant
+  // In future, could fetch from backend based on authenticated user's tenant
+  // For now, return config loaded from environment variables
   return defaultTenantConfig;
 };
+
+// Re-export defaultTenantConfig for direct access
+export { defaultTenantConfig };

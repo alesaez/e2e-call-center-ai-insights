@@ -9,6 +9,7 @@ import DashboardPage from './components/DashboardPage';
 import ChatbotPage from './components/ChatbotPage';
 import SettingsPage from './components/SettingsPage';
 import { createAppTheme, getTenantConfig, TenantConfig, defaultTenantConfig } from './theme/theme';
+import { applyFavicon, updateDocumentTitle } from './config/tenantConfig';
 
 function App() {
   const [tenantConfig, setTenantConfig] = useState<TenantConfig>(defaultTenantConfig);
@@ -20,6 +21,10 @@ function App() {
       const config = await getTenantConfig();
       setTenantConfig(config);
       setTheme(createAppTheme(config));
+      
+      // Apply branding
+      applyFavicon(config.faviconUrl);
+      updateDocumentTitle(config.name);
     };
     loadTenantConfig();
   }, []);
