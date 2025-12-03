@@ -262,7 +262,7 @@ function MainLayoutContent({ children, tenantConfig, refreshTrigger }: MainLayou
             >
               <ChatIcon />
             </ListItemIcon>
-            <ListItemText primary="CS Chatbot" />
+            <ListItemText primary="Chatbot" />
             <IconButton
               size="small"
               onClick={(e) => {
