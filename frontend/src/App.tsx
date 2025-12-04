@@ -7,6 +7,7 @@ import ProtectedRoute from './components/ProtectedRoute';
 import MainLayout from './components/MainLayout';
 import DashboardPage from './components/DashboardPage';
 import ChatbotPage from './components/ChatbotPage';
+import AIFoundryPage from './components/AIFoundryPage';
 import SettingsPage from './components/SettingsPage';
 import { createAppTheme, getTenantConfig, TenantConfig, defaultTenantConfig } from './theme/theme';
 import { applyFavicon, updateDocumentTitle } from './config/tenantConfig';
@@ -50,6 +51,16 @@ function App() {
             <ProtectedRoute>
               <MainLayout tenantConfig={tenantConfig}>
                 <ChatbotPage />
+              </MainLayout>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/ai-foundry"
+          element={
+            <ProtectedRoute>
+              <MainLayout tenantConfig={tenantConfig}>
+                <AIFoundryPage />
               </MainLayout>
             </ProtectedRoute>
           }

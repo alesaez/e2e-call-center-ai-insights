@@ -447,6 +447,40 @@ function MainLayoutContent({ children, tenantConfig, refreshTrigger }: MainLayou
             )}
           </List>
         </Collapse>
+
+        {/* AI Foundry Chatbot */}
+        <ListItem disablePadding sx={{ px: 1 }}>
+          <ListItemButton
+            selected={location.pathname === '/ai-foundry'}
+            onClick={() => {
+              navigate('/ai-foundry');
+              if (isMobile) setMobileOpen(false);
+            }}
+            sx={{
+              borderRadius: 1,
+              mb: 0.5,
+              '&.Mui-selected': {
+                bgcolor: 'primary.main',
+                color: 'white',
+                '&:hover': {
+                  bgcolor: 'primary.dark',
+                },
+                '& .MuiListItemIcon-root': {
+                  color: 'white',
+                },
+              },
+            }}
+          >
+            <ListItemIcon
+              sx={{
+                color: location.pathname === '/ai-foundry' ? 'white' : 'inherit',
+              }}
+            >
+              <ChatIcon />
+            </ListItemIcon>
+            <ListItemText primary="AI Foundry" />
+          </ListItemButton>
+        </ListItem>
       </List>
     </Box>
   );

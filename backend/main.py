@@ -35,6 +35,7 @@ import uuid
 
 from cosmos_service import CosmosDBService
 from copilot_studio_service import CopilotStudioService
+from ai_foundry_service import AIFoundryService
 from conversation_service import ConversationService
 
 # Configure logging
@@ -53,6 +54,7 @@ security = HTTPBearer()
 # Global service instances
 cosmos_service: Optional[CosmosDBService] = None
 copilot_studio_service: Optional[CopilotStudioService] = None
+ai_foundry_service: Optional[AIFoundryService] = None
 conversation_service: Optional[ConversationService] = None
 
 # Cached settings
@@ -63,7 +65,7 @@ def get_settings():
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup."""
-    global cosmos_service, copilot_studio_service, conversation_service
+    global cosmos_service, copilot_studio_service, ai_foundry_service, conversation_service
     settings = get_settings()
     
     # Initialize Cosmos DB service if connection string is provided
@@ -83,6 +85,15 @@ async def startup_event():
         except Exception as e:
             logger.error(f"Failed to initialize Copilot Studio service: {e}")
             copilot_studio_service = None
+    
+    # Initialize Azure AI Foundry service if configured
+    if settings.ai_foundry:
+        try:
+            ai_foundry_service = AIFoundryService(settings)
+            logger.info("✓ Azure AI Foundry service initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize Azure AI Foundry service: {e}")
+            ai_foundry_service = None
     
     # Initialize conversation service (works with or without Cosmos)
     conversation_service = ConversationService(cosmos_service)
@@ -422,6 +433,131 @@ async def send_card_response_to_copilot(
         
     except Exception as e:
         logger.error(f"Failed to send card response to Copilot Studio: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send card response: {str(e)}"
+        )
+
+# ============================================================================
+# Azure AI Foundry Agent Endpoints
+# ============================================================================
+
+@app.post("/api/ai-foundry/token")
+async def get_ai_foundry_token(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    token_payload: Dict = Depends(verify_token)
+):
+    """
+    Initialize a new Azure AI Foundry conversation session.
+    Returns the thread ID and welcome message.
+    """
+    if not ai_foundry_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Azure AI Foundry is not configured."
+        )
+    
+    user_token = credentials.credentials
+    user_id = token_payload.get("sub") or token_payload.get("oid")
+    user_name = token_payload.get("name", "User")
+    
+    try:
+        session_data = await ai_foundry_service.start_conversation(
+            user_token=user_token,
+            user_id=user_id,
+            user_name=user_name
+        )
+        return session_data
+        
+    except Exception as e:
+        logger.error(f"Failed to initialize Azure AI Foundry session: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to initialize session: {str(e)}"
+        )
+
+@app.post("/api/ai-foundry/send-message")
+async def send_message_to_ai_foundry(
+    message_data: Dict,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    token_payload: Dict = Depends(verify_token)
+):
+    """
+    Send a message to Azure AI Foundry and receive a response.
+    """
+    if not ai_foundry_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Azure AI Foundry is not configured."
+        )
+    
+    try:
+        user_token = credentials.credentials
+        conversation_id = message_data.get("conversationId")
+        message_text = message_data.get("text")
+        user_id = message_data.get("userId")
+        
+        if not all([conversation_id, message_text, user_id]):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="conversationId, text, and userId are required"
+            )
+        
+        response = await ai_foundry_service.send_message(
+            conversation_id=conversation_id,
+            message_text=message_text,
+            user_token=user_token,
+            user_id=user_id
+        )
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Failed to send message to Azure AI Foundry: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to send message: {str(e)}"
+        )
+
+@app.post("/api/ai-foundry/send-card-response")
+async def send_card_response_to_ai_foundry(
+    message_data: Dict,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    token_payload: Dict = Depends(verify_token)
+):
+    """
+    Send an Adaptive Card response to Azure AI Foundry.
+    This handles card submit actions like Allow/Cancel buttons.
+    """
+    if not ai_foundry_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Azure AI Foundry is not configured."
+        )
+    
+    try:
+        user_token = credentials.credentials
+        conversation_id = message_data.get("conversationId")
+        action_data = message_data.get("actionData")
+        user_id = message_data.get("userId")
+        
+        if not all([conversation_id, action_data, user_id]):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="conversationId, actionData, and userId are required"
+            )
+        
+        response = await ai_foundry_service.send_card_response(
+            conversation_id=conversation_id,
+            action_data=action_data,
+            user_token=user_token,
+            user_id=user_id
+        )
+        
+        return response
+        
+    except Exception as e:
+        logger.error(f"Failed to send card response to Azure AI Foundry: {str(e)}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to send card response: {str(e)}"

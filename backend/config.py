@@ -54,6 +54,49 @@ class CopilotStudioSettings(BaseSettings):
     app_client_id: str
     app_client_secret: Optional[str] = ""
 
+class AIFoundrySettings(BaseSettings):
+    """
+    Azure AI Foundry agent configuration settings.
+    Parses project details from the endpoint URL.
+    """
+    model_config = ConfigDict(
+        env_file=str(BASE_DIR / ".env"),
+        env_file_encoding="utf-8",
+        env_prefix="AI_FOUNDRY_",
+        case_sensitive=False,
+        extra="ignore"  # Ignore extra environment variables from the .env file
+    )
+    
+    endpoint: str  # Full endpoint URL (e.g., https://xxx-aifoundry.services.ai.azure.com/api/projects/ProjectName)
+    agent_id: str
+    tenant_id: str  # Required for MSAL OBO flow
+    app_client_id: str  # Required for MSAL OBO flow
+    app_client_secret: Optional[str] = ""  # Required for MSAL OBO flow
+    send_welcome_message: bool = True
+    
+    @property
+    def project_name(self) -> str:
+        """Extract project name from endpoint URL."""
+        # Parse: https://xxx-aifoundry.services.ai.azure.com/api/projects/ProjectName
+        try:
+            parts = self.endpoint.rstrip('/').split('/projects/')
+            if len(parts) == 2:
+                return parts[1].split('/')[0]  # Get ProjectName, handle trailing segments
+            return "unknown"
+        except Exception:
+            return "unknown"
+    
+    @property
+    def host(self) -> str:
+        """Extract host from endpoint URL."""
+        # Parse: https://xxx-aifoundry.services.ai.azure.com
+        try:
+            from urllib.parse import urlparse
+            parsed = urlparse(self.endpoint)
+            return f"{parsed.scheme}://{parsed.netloc}"
+        except Exception:
+            return self.endpoint.split('/api/')[0] if '/api/' in self.endpoint else self.endpoint
+
 class Settings(BaseSettings):
     """
     Application settings loaded from environment variables.
@@ -89,6 +132,9 @@ class Settings(BaseSettings):
     # Copilot Studio Configuration
     copilot_studio: Optional[CopilotStudioSettings] = None
     
+    # Azure AI Foundry Configuration
+    ai_foundry: Optional[AIFoundrySettings] = None
+    
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
         try:
@@ -97,4 +143,12 @@ class Settings(BaseSettings):
         except Exception as e:
             # Copilot Studio config is optional
             print(f"⚠ Copilot Studio not configured: {e}")
+            pass
+        
+        try:
+            self.ai_foundry = AIFoundrySettings()
+            print(f"✓ Azure AI Foundry configured: project={self.ai_foundry.project_name}, agent={self.ai_foundry.agent_id}")
+        except Exception as e:
+            # AI Foundry config is optional
+            print(f"⚠ Azure AI Foundry not configured: {e}")
             pass
