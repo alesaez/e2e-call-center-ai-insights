@@ -33,13 +33,9 @@ from chat_models import (
 )
 import uuid
 
-from microsoft_agents.activity import Activity, ActivityTypes, ConversationAccount, CardAction, load_configuration_from_env
-from microsoft_agents.copilotstudio.client import (
-    ConnectionSettings,
-    CopilotClient,
-)
-from msal import ConfidentialClientApplication
 from cosmos_service import CosmosDBService
+from copilot_studio_service import CopilotStudioService
+from conversation_service import ConversationService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -54,8 +50,10 @@ query_templates_db: Dict[str, QueryTemplate] = {}
 # Security scheme
 security = HTTPBearer()
 
-# Global Cosmos DB service instance
+# Global service instances
 cosmos_service: Optional[CosmosDBService] = None
+copilot_studio_service: Optional[CopilotStudioService] = None
+conversation_service: Optional[ConversationService] = None
 
 # Cached settings
 @lru_cache()
@@ -65,7 +63,7 @@ def get_settings():
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup."""
-    global cosmos_service
+    global cosmos_service, copilot_studio_service, conversation_service
     settings = get_settings()
     
     # Initialize Cosmos DB service if connection string is provided
@@ -76,6 +74,18 @@ async def startup_event():
         except Exception as e:
             logger.error(f"Failed to initialize Cosmos DB service: {e}")
             cosmos_service = None
+    
+    # Initialize Copilot Studio service if configured
+    if settings.copilot_studio:
+        try:
+            copilot_studio_service = CopilotStudioService(settings)
+            logger.info("✓ Copilot Studio service initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize Copilot Studio service: {e}")
+            copilot_studio_service = None
+    
+    # Initialize conversation service (works with or without Cosmos)
+    conversation_service = ConversationService(cosmos_service)
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -298,92 +308,27 @@ async def get_copilot_studio_token(
     token_payload: Dict = Depends(verify_token)
 ):
     """
-    Create a Copilot Studio session using the microsoft-agents-copilotstudio-client library.
+    Create a Copilot Studio session.
     Uses On-Behalf-Of flow to impersonate the current user.
     """
-    settings = get_settings()
-    
-    if not settings.copilot_studio:
+    if not copilot_studio_service:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Copilot Studio is not configured. Please set COPILOT_STUDIO environment variables."
         )
     
-    if not settings.copilot_studio.environment_id or not settings.copilot_studio.schema_name:
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Copilot Studio environment_id and schema_name are required."
-        )
-    
     # Get user information from JWT token
     user_id = token_payload.get("sub") or token_payload.get("oid") or "user"
     user_name = token_payload.get("name", "User")
+    user_token = credentials.credentials
     
     try:
-        # Initialize Copilot Studio Client with connection settings
-        environment_id = settings.copilot_studio.environment_id
-        schema_name = settings.copilot_studio.schema_name
-        
-        # Create connection settings with agent_identifier
-        connection_settings = ConnectionSettings(
-            environment_id=environment_id,
-            agent_identifier=schema_name,
-            cloud=None,
-            copilot_agent_type=None,
-            custom_power_platform_cloud=None,
+        session_info = await copilot_studio_service.start_conversation(
+            user_token=user_token,
+            user_id=user_id,
+            user_name=user_name
         )
-        
-        # Acquire token for Copilot Studio using MSAL with On-Behalf-Of flow
-        if not settings.copilot_studio.app_client_secret:
-            logger.warning("No client secret provided, using connection without token")
-            client = CopilotClient(connection_settings, None)
-        else:
-            # Get the user's token from the request
-            user_token = credentials.credentials
-            
-            # Use MSAL to acquire token on behalf of the user
-            msal_app = ConfidentialClientApplication(
-                client_id=settings.copilot_studio.app_client_id,
-                client_credential=settings.copilot_studio.app_client_secret,
-                authority=f"https://login.microsoftonline.com/{settings.copilot_studio.tenant_id}"
-            )
-            
-            # Acquire token for Power Platform API on behalf of the user
-            token_result = msal_app.acquire_token_on_behalf_of(
-                user_assertion=user_token,
-                scopes=["https://api.powerplatform.com/.default"]
-            )
-            
-            if "access_token" not in token_result:
-                error_msg = token_result.get('error_description', token_result.get('error', 'Unknown error'))
-                logger.error(f"Failed to acquire token: {error_msg}")
-                raise Exception(f"Failed to acquire token: {error_msg}")
-            
-            # Create client instance with connection settings and token
-            print(f"Access token backend: {token_result['access_token']}")
-            client = CopilotClient(connection_settings, token_result["access_token"])
-        
-        # Start conversation - returns an async generator
-        act = client.start_conversation(True)
-        
-        async for action in act:
-            if action.text:
-                welcomeMessage = action.text
-                
-        conversation_id = action.conversation.id
-                
-        # The conversation is started when we send the first message
-        return {
-            "conversationId": conversation_id,
-            "userId": user_id,
-            "userName": user_name,
-            "environmentId": environment_id,
-            "schemaName": schema_name,
-            "endpoint": f"https://{environment_id}.api.powerplatform.com/v1.0/bots/{schema_name}",
-            "expiresIn": 3600,  # 1 hour
-            "sessionCreated": True,
-            "welcomeMessage": welcomeMessage
-        }
+        return session_info
         
     except Exception as e:
         logger.error(f"Copilot Studio session creation failed: {str(e)}")
@@ -402,9 +347,7 @@ async def send_message_to_copilot(
     Send a message to Copilot Studio and receive a response.
     Uses On-Behalf-Of flow to impersonate the current user.
     """
-    settings = get_settings()
-    
-    if not settings.copilot_studio:
+    if not copilot_studio_service:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Copilot Studio is not configured."
@@ -421,92 +364,16 @@ async def send_message_to_copilot(
                 detail="conversationId, text, and userId are required"
             )
         
-        # Initialize Copilot Studio Client with connection settings
-        connection_settings = ConnectionSettings(
-            environment_id=settings.copilot_studio.environment_id,
-            agent_identifier=settings.copilot_studio.schema_name,
-            cloud=None,
-            copilot_agent_type=None,
-            custom_power_platform_cloud=None,
+        user_token = credentials.credentials
+        
+        response = await copilot_studio_service.send_message(
+            conversation_id=conversation_id,
+            message_text=message_text,
+            user_token=user_token,
+            user_id=user_id
         )
         
-        # Use On-Behalf-Of flow to get Power Platform token as the user
-        if not settings.copilot_studio.app_client_secret:
-            logger.warning("No client secret provided, using connection without token")
-            client = CopilotClient(connection_settings, None)
-        else:
-            # Get the user's token from the request
-            user_token = credentials.credentials
-            
-            msal_app = ConfidentialClientApplication(
-                settings.copilot_studio.app_client_id,
-                authority=f"https://login.microsoftonline.com/{settings.copilot_studio.tenant_id}",
-                client_credential=settings.copilot_studio.app_client_secret,
-            )
-            
-            # Use On-Behalf-Of flow to exchange user token for Power Platform token
-            result = msal_app.acquire_token_on_behalf_of(
-                user_assertion=user_token,
-                scopes=["https://api.powerplatform.com/.default"]
-            )
-            
-            if "access_token" not in result:
-                logger.error(f"Failed to acquire token: {result.get('error_description', 'Unknown error')}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to acquire Copilot Studio token"
-                )
-            
-            client = CopilotClient(connection_settings, result["access_token"])
-        
-        # Send message using ask_question method - it returns an async generator
-        response_text = ""
-        attachments = []
-        activities = []
-                      
-        async for activity in client.ask_question(
-            conversation_id=conversation_id,
-            question=message_text
-        ):
-            activities.append(activity)
-
-            if activity.type == ActivityTypes.typing:
-                logger.info(f"ACTIVITY [ {activity.type} ]: {activity.text}")
-                continue
-
-            elif activity.type == ActivityTypes.event:
-                logger.info(f"ACTIVITY [ {activity.type} ]: {activity.value}")
-                continue
-                
-            elif activity.type == ActivityTypes.message:
-                logger.info(f"ACTIVITY [ {activity.type} ]: {activity.text}")
-                # Extract text content
-                if activity.text:
-                    response_text = activity.text
-                
-                # Extract attachments (including Adaptive Cards)
-                if hasattr(activity, 'attachments') and activity.attachments:
-                    for attachment in activity.attachments:
-                        attachments.append({
-                            "contentType": attachment.content_type,
-                            "content": attachment.content,
-                            "name": getattr(attachment, 'name', None)
-                        })
-        
-            else:
-                logger.info(f"UNKNOWN ACTIVITY [ {activity.type} ]: {activity}")
-
-        # If no response text was collected, use a default message
-        if not response_text and not attachments:
-            response_text = "I received your message."
-        
-        return {
-            "success": True,
-            "response": response_text,
-            "text": response_text,  # Alias for frontend compatibility
-            "attachments": attachments,
-            "conversationId": conversation_id
-        }
+        return response
         
     except Exception as e:
         logger.error(f"Failed to send message to Copilot Studio: {str(e)}")
@@ -525,9 +392,7 @@ async def send_card_response_to_copilot(
     Send an Adaptive Card response (InvokeResponse activity) to Copilot Studio.
     This handles card submit actions like Allow/Cancel buttons.
     """
-    settings = get_settings()
-    
-    if not settings.copilot_studio:
+    if not copilot_studio_service:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Copilot Studio is not configured."
@@ -544,121 +409,16 @@ async def send_card_response_to_copilot(
                 detail="conversationId, actionData, and userId are required"
             )
         
-        # Initialize Copilot Studio Client with connection settings
-        connection_settings = ConnectionSettings(
-            environment_id=settings.copilot_studio.environment_id,
-            agent_identifier=settings.copilot_studio.schema_name,
-            cloud=None,
-            copilot_agent_type=None,
-            custom_power_platform_cloud=None,
+        user_token = credentials.credentials
+        
+        response = await copilot_studio_service.send_card_response(
+            conversation_id=conversation_id,
+            action_data=action_data,
+            user_token=user_token,
+            user_id=user_id
         )
         
-        # Use On-Behalf-Of flow to get Power Platform token as the user
-        if not settings.copilot_studio.app_client_secret:
-            logger.warning("No client secret provided, using connection without token")
-            client = CopilotClient(connection_settings, None)
-        else:
-            # Get the user's token from the request
-            user_token = credentials.credentials
-            
-            msal_app = ConfidentialClientApplication(
-                settings.copilot_studio.app_client_id,
-                authority=f"https://login.microsoftonline.com/{settings.copilot_studio.tenant_id}",
-                client_credential=settings.copilot_studio.app_client_secret,
-            )
-            
-            # Use On-Behalf-Of flow to exchange user token for Power Platform token
-            result = msal_app.acquire_token_on_behalf_of(
-                user_assertion=user_token,
-                scopes=["https://api.powerplatform.com/.default"]
-            )
-            
-            if "access_token" not in result:
-                logger.error(f"Failed to acquire token: {result.get('error_description', 'Unknown error')}")
-                raise HTTPException(
-                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                    detail="Failed to acquire Copilot Studio token"
-                )
-            
-            client = CopilotClient(connection_settings, result["access_token"])
-        
-        # Create InvokeResponse activity following the Node.js pattern
-        invoke_activity = Activity(
-            type=ActivityTypes.invoke_response,
-            value=action_data
-        )
-
-        invoke_activity.conversation = ConversationAccount(id=conversation_id)
-        logger.info(f"Invoke Activity: {invoke_activity}")
-
-        response_text = ""
-        attachments = []
-        activities = []
-        
-        # Send the invoke response activity (if client has send_activity method)
-        # Otherwise, fall back to ask_question with the action data
-        try:
-            if hasattr(client, 'ask_question_with_activity'):
-                logger.info(" >>>>>>>>>>>>>>> Sending invoke activity with ask_question_with_activity")
-                async for activity in client.ask_question_with_activity(invoke_activity):
-                    activities.append(activity)
-                    logger.info(f"Sending activity [ {activity.type} ]: {activity}")
-                    
-                    if activity.type == ActivityTypes.message:
-                        # Extract text content
-                        if activity.text:
-                            response_text = activity.text
-                        
-                        # Extract attachments (including Adaptive Cards)
-                        if hasattr(activity, 'attachments') and activity.attachments:
-                            for attachment in activity.attachments:
-                                attachments.append({
-                                    "contentType": attachment.content_type,
-                                    "content": attachment.content,
-                                    "name": getattr(attachment, 'name', None)
-                                })
-            else:
-                
-                logger.info(" >>>>>>>>>>>>>>> Sending as regular message")
-                # Fallback: send as a regular message with action data
-                action_text = f"Card action: {action_data.get('action', 'submitted')}"
-                async for activity in client.ask_question(
-                    conversation_id=conversation_id,
-                    question=action_text
-                ):
-                    activities.append(activity)
-                    logger.info(f"Received regular activity [ {activity.type} ]: {activity}")
-                    
-                    if activity.type == ActivityTypes.message:
-                        # Extract text content
-                        if activity.text:
-                            response_text = activity.text
-                        
-                        # Extract attachments (including Adaptive Cards)
-                        if hasattr(activity, 'attachments') and activity.attachments:
-                            for attachment in activity.attachments:
-                                attachments.append({
-                                    "contentType": attachment.content_type,
-                                    "content": attachment.content,
-                                    "name": getattr(attachment, 'name', None)
-                                })
-        except Exception as invoke_error:
-            logger.warning(f"Failed to send invoke response, using fallback: {invoke_error}")
-            # Final fallback: treat as regular message
-            action_text = f"User selected: {action_data.get('action', 'Unknown action')}"
-            response_text = "Action received and processed."
-        
-        # If no response text was collected, use a default message
-        if not response_text and not attachments:
-            response_text = "Card action processed successfully."
-        
-        return {
-            "success": True,
-            "response": response_text,
-            "text": response_text,  # Alias for frontend compatibility
-            "attachments": attachments,
-            "conversationId": conversation_id
-        }
+        return response
         
     except Exception as e:
         logger.error(f"Failed to send card response to Copilot Studio: {str(e)}")
@@ -674,16 +434,17 @@ async def send_card_response_to_copilot(
 @app.get("/api/chat/conversations", response_model=List[ConversationSummary])
 async def get_user_conversations(
     limit: int = 50,
+    agent_type: Optional[str] = None,
     token_payload: Dict = Depends(verify_token)
 ):
     """
     Get conversation history for the authenticated user.
     Returns a list of conversation summaries.
     """
-    if not cosmos_service:
+    if not conversation_service:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Chat history service is not available. Cosmos DB not configured."
+            detail="Chat history service is not available."
         )
     
     user_id = token_payload.get("sub") or token_payload.get("oid")
@@ -694,7 +455,11 @@ async def get_user_conversations(
         )
     
     try:
-        conversations = await cosmos_service.get_user_conversations(user_id, limit)
+        conversations = await conversation_service.get_user_conversations(
+            user_id=user_id, 
+            limit=limit,
+            agent_type=agent_type
+        )
         return conversations
     except Exception as e:
         logger.error(f"Failed to get conversations for user {user_id}: {e}")
@@ -711,10 +476,10 @@ async def create_conversation(
     """
     Create a new chat conversation.
     """
-    if not cosmos_service:
+    if not conversation_service:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Chat history service is not available. Cosmos DB not configured."
+            detail="Chat history service is not available."
         )
     
     user_id = token_payload.get("sub") or token_payload.get("oid")
@@ -727,13 +492,14 @@ async def create_conversation(
         )
     
     try:
-        # Generate a new Copilot Studio conversation ID
-        copilot_conversation_id = str(uuid.uuid4())
+        # Generate a new agent conversation ID (e.g., for Copilot Studio)
+        agent_conversation_id = str(uuid.uuid4())
         
-        conversation = await cosmos_service.create_conversation(
+        conversation = await conversation_service.create_conversation(
             user_id=user_id,
             user_name=user_name,
-            copilot_conversation_id=copilot_conversation_id,
+            agent_conversation_id=agent_conversation_id,
+            agent_type=request.agent_type or "copilot_studio",
             title=request.title,
             session_data=request.session_data
         )
@@ -754,10 +520,10 @@ async def get_conversation(
     """
     Get a specific conversation with full message history.
     """
-    if not cosmos_service:
+    if not conversation_service:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Chat history service is not available. Cosmos DB not configured."
+            detail="Chat history service is not available."
         )
     
     user_id = token_payload.get("sub") or token_payload.get("oid")
@@ -768,7 +534,7 @@ async def get_conversation(
         )
     
     try:
-        conversation = await cosmos_service.get_conversation(conversation_id, user_id)
+        conversation = await conversation_service.get_conversation(conversation_id, user_id)
         if not conversation:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
@@ -793,10 +559,10 @@ async def get_messages(
     """
     Get all messages for a specific conversation/session.
     """
-    if not cosmos_service:
+    if not conversation_service:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Chat history service is not available. Cosmos DB not configured."
+            detail="Chat history service is not available."
         )
     
     user_id = token_payload.get("sub") or token_payload.get("oid")
@@ -807,7 +573,7 @@ async def get_messages(
         )
     
     try:
-        messages = await cosmos_service.get_session_messages(conversation_id)
+        messages = await conversation_service.get_conversation_messages(conversation_id)
         return messages
     except Exception as e:
         logger.error(f"Failed to get messages for conversation {conversation_id}: {e}")
@@ -825,10 +591,10 @@ async def add_message(
     """
     Add a message to an existing conversation.
     """
-    if not cosmos_service:
+    if not conversation_service:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Chat history service is not available. Cosmos DB not configured."
+            detail="Chat history service is not available."
         )
     
     user_id = token_payload.get("sub") or token_payload.get("oid")
@@ -839,8 +605,10 @@ async def add_message(
         )
     
     try:
-        success = await cosmos_service.add_message_to_conversation(
-            conversation_id, user_id, message
+        success = await conversation_service.add_message(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            message=message
         )
         
         if not success:
@@ -867,10 +635,10 @@ async def delete_conversation(
     """
     Delete (soft delete) a conversation.
     """
-    if not cosmos_service:
+    if not conversation_service:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Chat history service is not available. Cosmos DB not configured."
+            detail="Chat history service is not available."
         )
     
     user_id = token_payload.get("sub") or token_payload.get("oid")
@@ -881,7 +649,7 @@ async def delete_conversation(
         )
     
     try:
-        success = await cosmos_service.delete_conversation(conversation_id, user_id)
+        success = await conversation_service.delete_conversation(conversation_id, user_id)
         
         if not success:
             raise HTTPException(

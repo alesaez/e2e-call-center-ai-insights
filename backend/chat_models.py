@@ -132,6 +132,7 @@ class ConversationSummary(BaseModel):
 class CreateConversationRequest(BaseModel):
     """Request model for creating a new conversation."""
     title: Optional[str] = None
+    agent_type: Optional[str] = "copilot_studio"  # Default to copilot_studio for backward compatibility
     session_data: Optional[dict] = None
 
 class AddMessageRequest(BaseModel):
