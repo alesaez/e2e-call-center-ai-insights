@@ -532,7 +532,8 @@ export default function ChatbotPage() {
       console.log('🆕 Creating new conversation for Adaptive Card action');
       try {
         const newConversationResponse = await apiClient.post('/api/chat/conversations', {
-          title: `Card Action: ${actionType || 'Unknown'}`
+          title: `Card Action: ${actionType || 'Unknown'}`,
+          agent_id: session?.schemaName
         });
         conversationId = newConversationResponse.data.id;
         setCurrentConversationId(conversationId);
@@ -661,7 +662,8 @@ export default function ChatbotPage() {
           forceNewConversationRef.current = false; // Reset the flag
         }
         const newConversationResponse = await apiClient.post('/api/chat/conversations', {
-          title: textToSend.length > 50 ? textToSend.substring(0, 50) + '...' : textToSend
+          title: textToSend.length > 50 ? textToSend.substring(0, 50) + '...' : textToSend,
+          agent_id: session?.schemaName
         });
         conversationId = newConversationResponse.data.id;
         setCurrentConversationId(conversationId);

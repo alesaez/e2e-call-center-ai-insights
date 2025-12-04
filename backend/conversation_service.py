@@ -42,7 +42,7 @@ class ConversationService:
         user_name: str,
         agent_conversation_id: str,
         title: Optional[str] = None,
-        agent_type: str = "copilot_studio",
+        agent_id: Optional[str] = None,
         metadata: Optional[dict] = None
     ) -> ChatConversation:
         """
@@ -53,7 +53,7 @@ class ConversationService:
             user_name: User display name
             agent_conversation_id: The conversation ID from the agent (e.g., Copilot Studio)
             title: Optional conversation title
-            agent_type: Type of agent (e.g., "copilot_studio", "ai_foundry")
+            agent_id: Agent identifier (e.g., schema_name for Copilot Studio, agent_id for AI Foundry)
             metadata: Optional additional metadata
             
         Returns:
@@ -61,19 +61,31 @@ class ConversationService:
         """
         if self.cosmos_service:
             try:
-                # Store in Cosmos DB
-                session_data = metadata or {}
-                session_data["agent_type"] = agent_type
-                
-                conversation = await self.cosmos_service.create_conversation(
+                # Create session with agent_id
+                session = await self.cosmos_service.create_session(
                     user_id=user_id,
                     user_name=user_name,
                     copilot_conversation_id=agent_conversation_id,
                     title=title,
-                    session_data=session_data
+                    metadata=metadata,
+                    agent_id=agent_id
                 )
                 
-                logger.info(f"Created conversation in Cosmos: {conversation.id}")
+                # Convert to conversation
+                conversation = ChatConversation(
+                    id=session.id,
+                    conversation_id=session.conversation_id or agent_conversation_id,
+                    user_id=user_id,
+                    user_name=user_name,
+                    title=session.title,
+                    messages=[],
+                    created_at=session.createdAt,
+                    updated_at=session.lastActiveAt,
+                    agent_id=agent_id,
+                    is_active=session.is_active
+                )
+                
+                logger.info(f"Created conversation in Cosmos: {conversation.id} for agent: {agent_id}")
                 return conversation
                 
             except Exception as e:
@@ -82,6 +94,7 @@ class ConversationService:
         
         # Fallback to in-memory store
         conversation_id = f"conv_{uuid.uuid4().hex[:12]}"
+            
         conversation = ChatConversation(
             id=conversation_id,
             conversation_id=agent_conversation_id,
@@ -91,19 +104,19 @@ class ConversationService:
             messages=[],
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
-            session_data={"agent_type": agent_type, **(metadata or {})},
+            agent_id=agent_id,
             is_active=True
         )
         
         self._in_memory_store[conversation_id] = conversation
-        logger.info(f"Created conversation in memory: {conversation_id}")
+        logger.info(f"Created conversation in memory: {conversation_id} for agent: {agent_id}")
         return conversation
     
     async def get_user_conversations(
         self,
         user_id: str,
         limit: int = 50,
-        agent_type: Optional[str] = None
+        agent_id: Optional[str] = None
     ) -> List[ConversationSummary]:
         """
         Get conversation summaries for a user.
@@ -111,21 +124,14 @@ class ConversationService:
         Args:
             user_id: User identifier
             limit: Maximum number of conversations to return
-            agent_type: Optional filter by agent type
+            agent_id: Optional filter by agent ID
             
         Returns:
             List of ConversationSummary objects
         """
         if self.cosmos_service:
             try:
-                summaries = await self.cosmos_service.get_user_conversations(user_id, limit)
-                
-                # Filter by agent_type if specified
-                if agent_type:
-                    # Note: This requires session_data to be available in the summary
-                    # For now, we return all summaries
-                    pass
-                
+                summaries = await self.cosmos_service.get_user_conversations(user_id, limit, agent_id)
                 return summaries
                 
             except Exception as e:
@@ -138,11 +144,11 @@ class ConversationService:
             if conv.user_id == user_id and conv.is_active
         ]
         
-        # Filter by agent_type if specified
-        if agent_type:
+        # Filter by agent_id if specified
+        if agent_id:
             user_conversations = [
                 conv for conv in user_conversations
-                if conv.session_data and conv.session_data.get("agent_type") == agent_type
+                if conv.agent_id == agent_id
             ]
         
         # Convert to summaries

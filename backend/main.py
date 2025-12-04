@@ -570,7 +570,7 @@ async def send_card_response_to_ai_foundry(
 @app.get("/api/chat/conversations", response_model=List[ConversationSummary])
 async def get_user_conversations(
     limit: int = 50,
-    agent_type: Optional[str] = None,
+    agent_id: Optional[str] = None,
     token_payload: Dict = Depends(verify_token)
 ):
     """
@@ -594,7 +594,7 @@ async def get_user_conversations(
         conversations = await conversation_service.get_user_conversations(
             user_id=user_id, 
             limit=limit,
-            agent_type=agent_type
+            agent_id=agent_id
         )
         return conversations
     except Exception as e:
@@ -635,9 +635,9 @@ async def create_conversation(
             user_id=user_id,
             user_name=user_name,
             agent_conversation_id=agent_conversation_id,
-            agent_type=request.agent_type or "copilot_studio",
+            agent_id=request.agent_id,
             title=request.title,
-            metadata=request.session_data
+            metadata=request.metadata
         )
         
         return conversation

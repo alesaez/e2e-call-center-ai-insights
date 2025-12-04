@@ -60,11 +60,11 @@ class ChatSession(BaseModel):
     title: str
     model: str = "gpt-4o-mini"
     metadata: Dict[str, Any] = {}
+    agentId: Optional[str] = None  # Agent identifier for filtering conversations
     
-    # Legacy compatibility fields
-    conversation_id: Optional[str] = None  # Copilot Studio conversation ID
-    user_name: Optional[str] = None  # User's display name 
-    session_data: Optional[dict] = None  # Store Copilot Studio session info
+    # Agent conversation reference
+    conversation_id: Optional[str] = None  # Agent-specific conversation ID (e.g., Copilot Studio or AI Foundry thread ID)
+    user_name: Optional[str] = None  # User's display name
     is_active: bool = True
 
 class ChatMessage(BaseModel):
@@ -93,7 +93,7 @@ class ChatMessage(BaseModel):
     timestamp: Optional[datetime] = None  # Alias for createdAt
 
 class ChatConversation(BaseModel):
-    """Legacy conversation model for backward compatibility."""
+    """Conversation model for API responses."""
     model_config = ConfigDict(
         populate_by_name=True,
         json_encoders={
@@ -102,14 +102,14 @@ class ChatConversation(BaseModel):
     )
     
     id: str  # Session ID
-    conversation_id: str  # Copilot Studio conversation ID
+    conversation_id: str  # Agent-specific conversation ID
     user_id: str  # User's object ID from Entra ID
     user_name: str  # User's display name
     title: str  # Conversation title
     messages: List[ChatMessage] = []
     created_at: datetime
     updated_at: datetime
-    session_data: Optional[dict] = None
+    agent_id: Optional[str] = None  # Agent identifier
     is_active: bool = True
 
 class ConversationSummary(BaseModel):
@@ -132,8 +132,8 @@ class ConversationSummary(BaseModel):
 class CreateConversationRequest(BaseModel):
     """Request model for creating a new conversation."""
     title: Optional[str] = None
-    agent_type: Optional[str] = "copilot_studio"  # Default to copilot_studio for backward compatibility
-    session_data: Optional[dict] = None
+    agent_id: Optional[str] = None  # Agent identifier (e.g., schema_name for Copilot Studio, agent_id for AI Foundry)
+    metadata: Optional[dict] = None  # Optional metadata for the conversation
 
 class AddMessageRequest(BaseModel):
     """Request model for adding a message to conversation."""

@@ -93,9 +93,10 @@ class CosmosDBService:
         user_name: str, 
         copilot_conversation_id: str,
         title: Optional[str] = None,
-        session_data: Optional[dict] = None,
+        metadata: Optional[dict] = None,
         tenant_id: Optional[str] = None,
-        model: str = "gpt-4o-mini"
+        model: str = "gpt-4o-mini",
+        agent_id: Optional[str] = None
     ) -> ChatSession:
         """Create a new chat session in the Sessions container."""
         await self.initialize()
@@ -114,15 +115,14 @@ class CosmosDBService:
             lastActiveAt=now,
             title=title or "New Conversation",
             model=model,
-            metadata={
+            metadata=metadata or {
                 "channel": "web",
                 "appVersion": "1.0.0",
                 "userAgent": "call-center-ai-insights"
             },
-            # Legacy compatibility fields
+            agentId=agent_id,
             conversation_id=copilot_conversation_id,
             user_name=user_name,
-            session_data=session_data,
             is_active=True
         )
         
@@ -138,45 +138,12 @@ class CosmosDBService:
             
         except exceptions.CosmosResourceExistsError:
             # Handle duplicate ID (rare but possible)
-            return await self.create_session(user_id, user_name, copilot_conversation_id, title, session_data, tenant_id, model)
+            return await self.create_session(user_id, user_name, copilot_conversation_id, title, metadata, tenant_id, model, agent_id)
         except Exception as e:
             logger.error(f"Failed to create session: {e}")
             raise
-
-    async def create_conversation(
-        self, 
-        user_id: str, 
-        user_name: str, 
-        copilot_conversation_id: str,
-        title: Optional[str] = None,
-        session_data: Optional[dict] = None
-    ) -> ChatConversation:
-        """Legacy method: Create a new chat session and return as ChatConversation for backward compatibility."""
-        session = await self.create_session(
-            user_id=user_id,
-            user_name=user_name,
-            copilot_conversation_id=copilot_conversation_id,
-            title=title,
-            session_data=session_data
-        )
-        
-        # Convert to legacy format
-        conversation = ChatConversation(
-            id=session.id,
-            conversation_id=session.conversation_id or copilot_conversation_id,
-            user_id=user_id,
-            user_name=user_name,
-            title=session.title,
-            messages=[],
-            created_at=session.createdAt,
-            updated_at=session.lastActiveAt,
-            session_data=session_data,
-            is_active=session.is_active
-        )
-        
-        return conversation
     
-    async def get_user_conversations(self, user_id: str, limit: int = 50) -> List[ConversationSummary]:
+    async def get_user_conversations(self, user_id: str, limit: int = 50, agent_id: Optional[str] = None) -> List[ConversationSummary]:
         """Get conversation summaries for a user from Sessions container."""
         await self.initialize()
         
@@ -184,20 +151,35 @@ class CosmosDBService:
             return []
         
         try:
-            # Query sessions for the user
-            query = """
-            SELECT s.id, s.title, s.createdAt, s.lastActiveAt, 
-                   s.is_active, s.conversation_id
-            FROM s 
-            WHERE s.userId = @user_id AND s.type = 'session' AND s.is_active = true
-            ORDER BY s.lastActiveAt DESC
-            OFFSET 0 LIMIT @limit
-            """
-            
-            parameters = [
-                {"name": "@user_id", "value": user_id},
-                {"name": "@limit", "value": limit}
-            ]
+            # Build query with optional agentId filter
+            if agent_id:
+                query = """
+                SELECT s.id, s.title, s.createdAt, s.lastActiveAt, 
+                       s.is_active, s.conversation_id, s.agentId
+                FROM s 
+                WHERE s.userId = @user_id AND s.type = 'session' AND s.is_active = true 
+                      AND s.agentId = @agent_id
+                ORDER BY s.lastActiveAt DESC
+                OFFSET 0 LIMIT @limit
+                """
+                parameters = [
+                    {"name": "@user_id", "value": user_id},
+                    {"name": "@agent_id", "value": agent_id},
+                    {"name": "@limit", "value": limit}
+                ]
+            else:
+                query = """
+                SELECT s.id, s.title, s.createdAt, s.lastActiveAt, 
+                       s.is_active, s.conversation_id, s.agentId
+                FROM s 
+                WHERE s.userId = @user_id AND s.type = 'session' AND s.is_active = true
+                ORDER BY s.lastActiveAt DESC
+                OFFSET 0 LIMIT @limit
+                """
+                parameters = [
+                    {"name": "@user_id", "value": user_id},
+                    {"name": "@limit", "value": limit}
+                ]
             
             sessions = []
             async for item in self.sessions_container.query_items(
@@ -298,7 +280,7 @@ class CosmosDBService:
             # Get messages from Messages container
             messages = await self.get_session_messages(session_id)
             
-            # Convert to legacy ChatConversation format
+            # Convert to ChatConversation format
             conversation = ChatConversation(
                 id=session_item['id'],
                 conversation_id=session_item.get('conversation_id', session_item['id']),
@@ -308,7 +290,7 @@ class CosmosDBService:
                 messages=messages,
                 created_at=datetime.fromisoformat(session_item['createdAt'].replace('Z', '+00:00')),
                 updated_at=datetime.fromisoformat(session_item['lastActiveAt'].replace('Z', '+00:00')),
-                session_data=session_item.get('session_data'),
+                agent_id=session_item.get('agentId'),
                 is_active=session_item.get('is_active', True)
             )
             
