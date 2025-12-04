@@ -169,9 +169,9 @@ class CopilotStudioService:
                 question=message_text
             ):
                 activities.append(activity)
-                
+                            
                 if activity.type == ActivityTypes.typing:
-                    logger.info(f"ACTIVITY [typing]: {activity.text}")
+                    # logger.info(f"ACTIVITY [typing]: {activity.text}")
                     continue
                 
                 elif activity.type == ActivityTypes.event:
@@ -241,9 +241,7 @@ class CopilotStudioService:
                 value=action_data
             )
             invoke_activity.conversation = ConversationAccount(id=conversation_id)
-            
-            logger.info(f"Sending invoke activity: {invoke_activity}")
-            
+                        
             response_text = ""
             attachments = []
             activities = []
