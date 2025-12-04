@@ -501,7 +501,7 @@ async def create_conversation(
             agent_conversation_id=agent_conversation_id,
             agent_type=request.agent_type or "copilot_studio",
             title=request.title,
-            session_data=request.session_data
+            metadata=request.session_data
         )
         
         return conversation
@@ -573,7 +573,7 @@ async def get_messages(
         )
     
     try:
-        messages = await conversation_service.get_conversation_messages(conversation_id)
+        messages = await conversation_service.get_conversation_messages(conversation_id, user_id)
         return messages
     except Exception as e:
         logger.error(f"Failed to get messages for conversation {conversation_id}: {e}")
@@ -608,7 +608,15 @@ async def add_message(
         success = await conversation_service.add_message(
             conversation_id=conversation_id,
             user_id=user_id,
-            message=message
+            content=message.content,
+            role=message.role,
+            attachments=message.attachments if hasattr(message, 'attachments') else None,
+            metadata={
+                "tokens": message.tokens if hasattr(message, 'tokens') else None,
+                "toolCalls": message.tool_calls if hasattr(message, 'tool_calls') else None,
+                "vector": message.vector if hasattr(message, 'vector') else None,
+                "grounding": message.grounding if hasattr(message, 'grounding') else None
+            }
         )
         
         if not success:
