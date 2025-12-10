@@ -113,6 +113,8 @@ class Settings(BaseSettings):
     ENTRA_CLIENT_ID: str
     
     # CORS Configuration
+    # Note: In Azure Container Apps, CORS is handled at the ingress level
+    # For local development, these defaults allow localhost
     ALLOWED_ORIGINS: List[str] = [
         "http://localhost:3000",
         "http://localhost:5173",  # Vite default port

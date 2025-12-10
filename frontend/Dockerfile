@@ -3,6 +3,18 @@ FROM node:18-alpine as build
 
 WORKDIR /app
 
+# Accept build arguments for Entra ID configuration
+ARG VITE_ENTRA_CLIENT_ID
+ARG VITE_ENTRA_TENANT_ID
+ARG VITE_API_SCOPE
+ARG VITE_API_BASE_URL
+
+# Set environment variables from build args (Vite reads VITE_* env vars at build time)
+ENV VITE_ENTRA_CLIENT_ID=$VITE_ENTRA_CLIENT_ID \
+    VITE_ENTRA_TENANT_ID=$VITE_ENTRA_TENANT_ID \
+    VITE_API_SCOPE=$VITE_API_SCOPE \
+    VITE_API_BASE_URL=$VITE_API_BASE_URL
+
 # Copy package files
 COPY package*.json ./
 
@@ -12,7 +24,7 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Build the application
+# Build the application (Vite will embed the environment variables)
 RUN npm run build
 
 # Production stage

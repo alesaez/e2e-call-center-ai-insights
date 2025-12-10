@@ -6,7 +6,7 @@ import asyncio
 import os
 from azure.cosmos.aio import CosmosClient
 from azure.cosmos import PartitionKey, exceptions
-from azure.identity.aio import DefaultAzureCredential
+from azure.identity.aio import DefaultAzureCredential,ManagedIdentityCredential
 from typing import List, Optional
 import logging
 from config import Settings
@@ -60,7 +60,12 @@ class CosmosDBService:
                     self.settings.COSMOS_DB_CONNECTION_STRING
                 )
             else:
-                return
+                # Use Managed Identity
+                credential = ManagedIdentityCredential()
+                self.client = CosmosClient(
+                    url=self.settings.COSMOS_DB_ACCOUNT_URI,
+                    credential=credential
+                )
             
             # Create database if it doesn't exist
             self.database = await self.client.create_database_if_not_exists(

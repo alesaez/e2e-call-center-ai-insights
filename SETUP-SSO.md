@@ -32,6 +32,9 @@ This guide walks you through implementing Single Sign-On (SSO) authentication us
    - **Name**: `CallCenterAI-Backend-API`
    - **Supported account types**: Choose based on your organization needs
    - **Redirect URI**: Leave blank for now
+   - **Redirect URI**: 
+     - Platform: **Web**
+     - URL: `http://localhost:8000` (for local dev)
 4. Click **Register**
 5. Note down the **Application (client) ID** and **Directory (tenant) ID**
 
@@ -44,6 +47,18 @@ This guide walks you through implementing Single Sign-On (SSO) authentication us
      - **Admin consent display name**: Access CallCenterAI API
      - **Admin consent description**: Allows the app to access the API as the user
      - **State**: Enabled
+7. **API Permissions**:
+   - Go to **API permissions** > **Add a permission**
+   - Choose the following permissions:
+      - From Microsoft APIs:
+         - **Microsoft Graph** (Delegated): openid, profile and User.Read
+      - From **API's my organization uses**
+         - **Power Platform API** (Delegated): CopilotStudio.Copilots.Invoke
+         - **Azure Machine Learning Services** (Delegated): user_impersonation
+8. **Web and SPA Settings**
+   - Under **Authentication** > **Settings**
+   - Enable *Access tokens* and *ID tokens*
+
 
 ### 2. Register the Frontend Application
 
@@ -67,10 +82,13 @@ This guide walks you through implementing Single Sign-On (SSO) authentication us
 
 6. **API Permissions**:
    - Go to **API permissions** > **Add a permission**
-   - Choose **My APIs** > Select your backend API
-   - Select the `access_as_user` scope
-   - Click **Add permissions**
-   - Click **Grant admin consent** (if you have admin rights)
+   - Choose the following permissions:
+      - From Microsoft APIs:
+         - **Microsoft Graph** (Delegated): openid, profile and User.Read
+      - From **My APIs** > Select your backend API
+         - Select the `access_as_user` scope
+         - Click **Add permissions**
+         - Click **Grant admin consent** (if you have admin rights)
 
 7. **Optional - For CS Chatbot Integration**:
    - Go to **API permissions** > **Add a permission**
