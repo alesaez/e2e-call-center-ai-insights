@@ -1262,7 +1262,14 @@ if (-not $InfraOnly) {
         --build-arg "VITE_ENTRA_CLIENT_ID=$EntraFrontendClientId" `
         --build-arg "VITE_ENTRA_TENANT_ID=$EntraTenantId" `
         --build-arg "VITE_API_SCOPE=api://$EntraBackendClientId/access_as_user" `
-        --build-arg "VITE_API_BASE_URL=$backendUrl" `
+        --build-arg "VITE_API_BASE_URL=$backendUrl" `        --build-arg "VITE_REDIRECT_URI=$frontendUrl" `
+        --build-arg "VITE_POST_LOGOUT_REDIRECT_URI=$frontendUrl" `
+        --build-arg "VITE_TENANT_ID=$VITE_TENANT_ID" `
+        --build-arg "VITE_TENANT_NAME=$VITE_TENANT_NAME" `
+        --build-arg "VITE_TENANT_LOGO_URL=$VITE_TENANT_LOGO_URL" `
+        --build-arg "VITE_TENANT_FAVICON_URL=$VITE_TENANT_FAVICON_URL" `
+        --build-arg "VITE_TENANT_PRIMARY_COLOR=$VITE_TENANT_PRIMARY_COLOR" `
+        --build-arg "VITE_TENANT_SECONDARY_COLOR=$VITE_TENANT_SECONDARY_COLOR" `
         .
     Pop-Location
 
