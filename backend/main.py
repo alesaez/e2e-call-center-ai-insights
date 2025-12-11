@@ -2,7 +2,7 @@
 FastAPI backend with Microsoft Entra ID (Azure AD) authentication.
 Uses JWT token validation to secure API endpoints.
 """
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional, Dict, List
@@ -37,6 +37,7 @@ from cosmos_service import CosmosDBService
 from copilot_studio_service import CopilotStudioService
 from ai_foundry_service import AIFoundryService
 from conversation_service import ConversationService
+from powerbi_service import PowerBIService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -56,6 +57,7 @@ cosmos_service: Optional[CosmosDBService] = None
 copilot_studio_service: Optional[CopilotStudioService] = None
 ai_foundry_service: Optional[AIFoundryService] = None
 conversation_service: Optional[ConversationService] = None
+powerbi_service: Optional[PowerBIService] = None
 
 # Cached settings
 @lru_cache()
@@ -65,17 +67,21 @@ def get_settings():
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup."""
-    global cosmos_service, copilot_studio_service, ai_foundry_service, conversation_service
+    global cosmos_service, copilot_studio_service, ai_foundry_service, conversation_service, powerbi_service
     settings = get_settings()
     
-    # Initialize Cosmos DB service if connection string is provided
-    if settings.COSMOS_DB_CONNECTION_STRING:
+    # Initialize Cosmos DB service if account URI is provided
+    if settings.COSMOS_DB_ACCOUNT_URI:
+        logger.info("Initializing Cosmos DB service...")
         cosmos_service = CosmosDBService(settings)
         try:
             await cosmos_service.initialize()
+            logger.info("✓ Cosmos DB service initialized successfully")
         except Exception as e:
-            logger.error(f"Failed to initialize Cosmos DB service: {e}")
+            logger.error(f"❌ Failed to initialize Cosmos DB service: {type(e).__name__}: {e}")
             cosmos_service = None
+    else:
+        logger.warning("⚠ Cosmos DB account URI not configured - service will not be available")
     
     # Initialize Copilot Studio service if configured
     if settings.copilot_studio:
@@ -94,6 +100,21 @@ async def startup_event():
         except Exception as e:
             logger.error(f"Failed to initialize Azure AI Foundry service: {e}")
             ai_foundry_service = None
+    
+    # Initialize Power BI service if configured
+    if settings.powerbi:
+        try:
+            powerbi_service = PowerBIService(
+                tenant_id=settings.powerbi.tenant_id,
+                client_id=settings.powerbi.client_id,
+                client_secret=settings.powerbi.client_secret,
+                workspace_id=settings.powerbi.workspace_id,
+                report_id=settings.powerbi.report_id
+            )
+            logger.info("✓ Power BI service initialized")
+        except Exception as e:
+            logger.error(f"Failed to initialize Power BI service: {e}")
+            powerbi_service = None
     
     # Initialize conversation service (works with or without Cosmos)
     conversation_service = ConversationService(cosmos_service)
@@ -238,7 +259,23 @@ async def verify_token(
 @app.get("/health")
 async def health_check():
     """Public health check endpoint."""
-    return {"status": "healthy"}
+    health_status = {"status": "healthy", "services": {}}
+    
+    # Check Cosmos DB if configured
+    if cosmos_service:
+        try:
+            cosmos_health = await cosmos_service.health_check()
+            health_status["services"]["cosmos_db"] = cosmos_health
+            if cosmos_health["status"] != "healthy":
+                health_status["status"] = "degraded"
+        except Exception as e:
+            health_status["services"]["cosmos_db"] = {
+                "status": "unhealthy",
+                "error": str(e)
+            }
+            health_status["status"] = "degraded"
+    
+    return health_status
 
 # Protected endpoints
 @app.get("/api/user/profile")
@@ -312,6 +349,66 @@ async def get_dashboard_charts(token_payload: Dict = Depends(verify_token)):
             {"agent": "Lisa Anderson", "calls": 71, "avgTime": 5.0, "satisfaction": 4.6},
         ],
     }
+
+# ============================================================================
+# Power BI Endpoints
+# ============================================================================
+
+@app.get("/api/powerbi/embed-config")
+async def get_powerbi_embed_config(
+    request: Request,
+    token_payload: Dict = Depends(verify_token)
+):
+    """
+    Get Power BI embed configuration including report ID, embed URL, and embed token.
+    Uses On-Behalf-Of (OBO) flow to access Power BI with user's permissions.
+    
+    Returns:
+        Dictionary containing:
+        - reportId: Power BI report ID
+        - embedUrl: Power BI embed URL
+        - embedToken: Generated embed token (valid for 60 minutes)
+        - tokenExpiration: ISO timestamp when the token expires
+        - workspaceId: Power BI workspace ID (optional)
+    
+    Raises:
+        HTTPException: If Power BI is not configured or token generation fails
+    """
+    if not powerbi_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Power BI service is not configured. Please check backend environment variables."
+        )
+    
+    try:
+        # Extract user's access token from Authorization header
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing or invalid Authorization header"
+            )
+        
+        user_access_token = auth_header[7:]  # Remove "Bearer " prefix
+        
+        logger.info(f"Generating Power BI embed config for user: {token_payload.get('preferred_username', 'unknown')}")
+        
+        # Get complete embed configuration using OBO flow
+        embed_config = await powerbi_service.get_embed_config(user_access_token)
+        
+        logger.info("Power BI embed config generated successfully")
+        return embed_config.to_dict()
+        
+    except Exception as e:
+        logger.error(f"Failed to get Power BI embed config: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to generate Power BI embed configuration: {str(e)}"
+        )
+
+# ============================================================================
+# Copilot Studio Endpoints
+# ============================================================================
 
 @app.post("/api/copilot-studio/token")
 async def get_copilot_studio_token(

@@ -1081,8 +1081,6 @@ export default function AIFoundryPage() {
             </Typography>
             <ul style={{ marginTop: '8px' }}>
               <li>Using Environment ID and Schema Name (Direct Connect)</li>
-              <li>Environment ID: b770721c-e485-e866-bddd-e89fe5b9a701</li>
-              <li>Schema Name: crb64_myAgent</li>
               <li>Backend endpoint: /api/copilot-studio/token</li>
             </ul>
           </Box>

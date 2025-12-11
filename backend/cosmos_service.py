@@ -30,6 +30,7 @@ class CosmosDBService:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.client: Optional[CosmosClient] = None
+        self.credential = None  # Store credential for proper cleanup
         self.database = None
         self.sessions_container = None  # Partitioned by userId
         self.messages_container = None  # Partitioned by sessionId
@@ -38,58 +39,82 @@ class CosmosDBService:
     async def initialize(self):
         """Initialize Cosmos DB connection and ensure database/containers exist."""
         if self._initialized:
+            logger.info("✓ Cosmos DB: Already initialized and ready")
             return
         
         try:
-            # Determine if we're running locally or in production
+            # Determine if we're running locally or in Azure Container Apps
+            # Azure Container Apps sets CONTAINER_APP_NAME environment variable
+            # For local development, ENVIRONMENT can be set to "development"
             is_localhost = (
                 os.getenv("ENVIRONMENT") == "development" or
-                os.getenv("WEBSITE_SITE_NAME") is None  # Azure App Service sets this
+                os.getenv("CONTAINER_APP_NAME") is None  # Azure Container Apps sets this
             )
             
-            if is_localhost and hasattr(self.settings, 'COSMOS_DB_ACCOUNT_URI') and self.settings.COSMOS_DB_ACCOUNT_URI:
-                # For localhost development, use DefaultAzureCredential
-                credential = DefaultAzureCredential()
+            logger.info(f"Cosmos DB: Environment detection - is_localhost={is_localhost}, "
+                       f"ENVIRONMENT={os.getenv('ENVIRONMENT')}, "
+                       f"CONTAINER_APP_NAME={os.getenv('CONTAINER_APP_NAME')}")
+            
+            # Validate configuration
+            if not self.settings.COSMOS_DB_ACCOUNT_URI:
+                raise ValueError("COSMOS_DB_ACCOUNT_URI is required for Cosmos DB initialization")
+            
+            logger.info(f"Cosmos DB: Account URI configured: {self.settings.COSMOS_DB_ACCOUNT_URI}")
+            
+            if is_localhost:
+                # For localhost development, use DefaultAzureCredential (Azure CLI, Visual Studio, etc.)
+                logger.info("Cosmos DB: Using DefaultAzureCredential for localhost development")
+                self.credential = DefaultAzureCredential()
                 self.client = CosmosClient(
                     url=self.settings.COSMOS_DB_ACCOUNT_URI,
-                    credential=credential
+                    credential=self.credential
                 )
-            elif self.settings.COSMOS_DB_CONNECTION_STRING:
-                # Use connection string for production or when DefaultAzureCredential is not available
-                self.client = CosmosClient.from_connection_string(
-                    self.settings.COSMOS_DB_CONNECTION_STRING
-                )
+                logger.info("✓ Cosmos DB: Client created with DefaultAzureCredential")
             else:
-                # Use Managed Identity
-                credential = ManagedIdentityCredential()
+                # For Azure Container Apps, use ManagedIdentityCredential
+                logger.info("Cosmos DB: Using ManagedIdentityCredential for Azure Container Apps")
+                self.credential = ManagedIdentityCredential()
                 self.client = CosmosClient(
                     url=self.settings.COSMOS_DB_ACCOUNT_URI,
-                    credential=credential
+                    credential=self.credential
                 )
+                logger.info("✓ Cosmos DB: Client created with ManagedIdentityCredential")
             
             # Create database if it doesn't exist
+            logger.info(f"Cosmos DB: Creating/accessing database '{self.settings.COSMOS_DB_DATABASE_NAME}'")
             self.database = await self.client.create_database_if_not_exists(
                 id=self.settings.COSMOS_DB_DATABASE_NAME
             )
+            logger.info(f"✓ Cosmos DB: Database '{self.settings.COSMOS_DB_DATABASE_NAME}' ready")
             
             # Create Sessions container - partitioned by userId
+            logger.info(f"Cosmos DB: Creating/accessing sessions container '{self.settings.COSMOS_DB_SESSIONS_CONTAINER}'")
             self.sessions_container = await self.database.create_container_if_not_exists(
                 id=self.settings.COSMOS_DB_SESSIONS_CONTAINER,
                 partition_key=PartitionKey(path="/userId"),
                 offer_throughput=400  # Minimum RU/s for autoscale
             )
+            logger.info(f"✓ Cosmos DB: Sessions container ready (partition key: /userId)")
             
             # Create Messages container - partitioned by sessionId  
+            logger.info(f"Cosmos DB: Creating/accessing messages container '{self.settings.COSMOS_DB_MESSAGES_CONTAINER}'")
             self.messages_container = await self.database.create_container_if_not_exists(
                 id=self.settings.COSMOS_DB_MESSAGES_CONTAINER,
                 partition_key=PartitionKey(path="/sessionId"),
                 offer_throughput=400  # Minimum RU/s for autoscale
             )
+            logger.info(f"✓ Cosmos DB: Messages container ready (partition key: /sessionId)")
             
             self._initialized = True
+            logger.info("✓ Cosmos DB: Initialization complete")
             
+        except exceptions.CosmosHttpResponseError as e:
+            logger.error(f"❌ Cosmos DB HTTP Error: status_code={e.status_code}, "
+                        f"sub_status={getattr(e, 'sub_status', 'N/A')}, "
+                        f"message={e.message}")
+            raise
         except Exception as e:
-            logger.error(f"Failed to initialize Cosmos DB: {e}")
+            logger.error(f"❌ Cosmos DB: Initialization failed - {type(e).__name__}: {e}")
             raise
     
     async def create_session(
@@ -152,7 +177,10 @@ class CosmosDBService:
         """Get conversation summaries for a user from Sessions container."""
         await self.initialize()
         
+        logger.info(f"Cosmos DB: Fetching conversations - user_id={user_id}, agent_id={agent_id}, limit={limit}")
+        
         if not self.sessions_container:
+            logger.error("❌ Cosmos DB: Sessions container not initialized")
             return []
         
         try:
@@ -172,6 +200,7 @@ class CosmosDBService:
                     {"name": "@agent_id", "value": agent_id},
                     {"name": "@limit", "value": limit}
                 ]
+                logger.info(f"Cosmos DB: Query with agent filter - agent_id={agent_id}")
             else:
                 query = """
                 SELECT s.id, s.title, s.createdAt, s.lastActiveAt, 
@@ -185,7 +214,9 @@ class CosmosDBService:
                     {"name": "@user_id", "value": user_id},
                     {"name": "@limit", "value": limit}
                 ]
+                logger.info("Cosmos DB: Query without agent filter")
             
+            logger.info(f"Cosmos DB: Executing query on Sessions container with partition_key={user_id}")
             sessions = []
             async for item in self.sessions_container.query_items(
                 query=query,
@@ -193,6 +224,8 @@ class CosmosDBService:
                 partition_key=user_id
             ):
                 sessions.append(item)
+            
+            logger.info(f"✓ Cosmos DB: Found {len(sessions)} sessions for user {user_id}")
             
             # For each session, get message count from Messages container
             summaries = []
@@ -216,13 +249,18 @@ class CosmosDBService:
                     )
                     summaries.append(summary)
                 except Exception as e:
-                    logger.warning(f"Failed to process session {session['id']}: {e}")
+                    logger.warning(f"⚠ Cosmos DB: Failed to process session {session['id']}: {e}")
                     continue
             
+            logger.info(f"✓ Cosmos DB: Returning {len(summaries)} conversation summaries")
             return summaries
             
+        except exceptions.CosmosHttpResponseError as e:
+            logger.error(f"❌ Cosmos DB HTTP Error getting conversations: status_code={e.status_code}, "
+                        f"sub_status={getattr(e, 'sub_status', 'N/A')}, message={e.message}")
+            return []
         except Exception as e:
-            logger.error(f"Failed to get conversations for user {user_id}: {e}")
+            logger.error(f"❌ Cosmos DB: Failed to get conversations for user {user_id}: {type(e).__name__}: {e}")
             return []
 
     async def _get_message_count(self, session_id: str) -> int:
@@ -544,11 +582,57 @@ class CosmosDBService:
             logger.error(f"Failed to delete messages for session {session_id}: {e}")
             return False
     
+    async def health_check(self) -> dict:
+        """Perform a health check on Cosmos DB connection."""
+        try:
+            await self.initialize()
+            
+            if not self.client:
+                return {"status": "unhealthy", "error": "Client not initialized"}
+            
+            if not self.database:
+                return {"status": "unhealthy", "error": "Database not initialized"}
+            
+            if not self.sessions_container or not self.messages_container:
+                return {"status": "unhealthy", "error": "Containers not initialized"}
+            
+            # Try a simple query to verify connectivity and permissions
+            query = "SELECT VALUE COUNT(1) FROM c"
+            count = 0
+            async for item in self.sessions_container.query_items(query=query):
+                count = item
+                break
+            
+            return {
+                "status": "healthy",
+                "database": self.settings.COSMOS_DB_DATABASE_NAME,
+                "sessions_container": self.settings.COSMOS_DB_SESSIONS_CONTAINER,
+                "messages_container": self.settings.COSMOS_DB_MESSAGES_CONTAINER,
+                "test_query_result": f"Sessions container has {count} items"
+            }
+            
+        except exceptions.CosmosHttpResponseError as e:
+            return {
+                "status": "unhealthy",
+                "error": f"HTTP {e.status_code}: {e.message}",
+                "sub_status": getattr(e, 'sub_status', 'N/A')
+            }
+        except Exception as e:
+            return {
+                "status": "unhealthy",
+                "error": f"{type(e).__name__}: {str(e)}"
+            }
+    
     async def close(self):
-        """Close Cosmos DB client connection."""
+        """Close Cosmos DB client and credential connections."""
         if self.client:
             await self.client.close()
-        # Note: DefaultAzureCredential doesn't require explicit cleanup
+            logger.info("✓ Cosmos DB: Client closed")
+        
+        # Close credential if it exists and has a close method
+        if self.credential and hasattr(self.credential, 'close'):
+            await self.credential.close()
+            logger.info("✓ Cosmos DB: Credential closed")
 
 # Global instance (will be initialized in main.py)
 cosmos_service: Optional[CosmosDBService] = None

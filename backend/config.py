@@ -97,6 +97,25 @@ class AIFoundrySettings(BaseSettings):
         except Exception:
             return self.endpoint.split('/api/')[0] if '/api/' in self.endpoint else self.endpoint
 
+class PowerBISettings(BaseSettings):
+    """
+    Power BI configuration settings for embed token generation.
+    Uses service principal (app registration) for authentication.
+    """
+    model_config = ConfigDict(
+        env_file=str(BASE_DIR / ".env"),
+        env_file_encoding="utf-8",
+        env_prefix="POWERBI_",
+        case_sensitive=False,
+        extra="ignore"
+    )
+    
+    tenant_id: str  # Azure AD tenant ID
+    client_id: str  # Service principal client ID
+    client_secret: str  # Service principal client secret
+    workspace_id: str  # Power BI workspace (group) ID
+    report_id: str  # Power BI report ID
+
 class Settings(BaseSettings):
     """
     Application settings loaded from environment variables.
@@ -125,8 +144,8 @@ class Settings(BaseSettings):
     API_VERSION: str = "1.0.0"
     
     # Azure Cosmos DB Configuration
-    COSMOS_DB_CONNECTION_STRING: Optional[str] = None
-    COSMOS_DB_ACCOUNT_URI: Optional[str] = None  # For DefaultAzureCredential (e.g., https://your-account.documents.azure.com:443/)
+    # Uses DefaultAzureCredential for localhost and ManagedIdentityCredential for Azure Container Apps
+    COSMOS_DB_ACCOUNT_URI: Optional[str] = None  # Required (e.g., https://your-account.documents.azure.com:443/)
     COSMOS_DB_DATABASE_NAME: str = "ContosoSuites"
     COSMOS_DB_SESSIONS_CONTAINER: str = "Sessions"
     COSMOS_DB_MESSAGES_CONTAINER: str = "Messages"
@@ -136,6 +155,9 @@ class Settings(BaseSettings):
     
     # Azure AI Foundry Configuration
     ai_foundry: Optional[AIFoundrySettings] = None
+    
+    # Power BI Configuration
+    powerbi: Optional[PowerBISettings] = None
     
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
@@ -153,4 +175,12 @@ class Settings(BaseSettings):
         except Exception as e:
             # AI Foundry config is optional
             print(f"⚠ Azure AI Foundry not configured: {e}")
+            pass
+        
+        try:
+            self.powerbi = PowerBISettings()
+            print(f"✓ Power BI configured: workspace={self.powerbi.workspace_id}, report={self.powerbi.report_id}")
+        except Exception as e:
+            # Power BI config is optional
+            print(f"⚠ Power BI not configured: {e}")
             pass

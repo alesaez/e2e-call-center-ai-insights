@@ -28,6 +28,7 @@ import {
   History as HistoryIcon,
   Add as AddIcon,
   Delete as DeleteIcon,
+  BarChart as BarChartIcon,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useMsal } from '@azure/msal-react';
@@ -231,6 +232,7 @@ function MainLayoutContent({ children, tenantConfig, refreshTrigger }: MainLayou
 
   const menuItems = [
     { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard' },
+    { text: 'Power BI Report', icon: <BarChartIcon />, path: '/powerbi' },
   ];
 
   const drawer = (

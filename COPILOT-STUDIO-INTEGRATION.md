@@ -545,7 +545,7 @@ properties:
       - name: COPILOT_STUDIO_DIRECT_LINE_SECRET
         secretRef: copilot-studio-secret
       - name: COPILOT_STUDIO_ENVIRONMENT_ID
-        value: "b770721c-e485-e866-bddd-e89fe5b9a701"
+        value: "your-environment-id"
 ```
 
 ### Use Azure Key Vault (Recommended)

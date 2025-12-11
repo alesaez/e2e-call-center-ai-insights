@@ -102,28 +102,23 @@ The chat history system uses **two separate containers** in Cosmos DB for optima
 
 ```bash
 # Azure Cosmos DB Configuration
+# Uses DefaultAzureCredential for localhost and ManagedIdentityCredential for Azure Container Apps
 COSMOS_DB_ACCOUNT_URI=https://your-account.documents.azure.com:443/
-COSMOS_DB_CONNECTION_STRING=AccountEndpoint=...;AccountKey=...;
 COSMOS_DB_DATABASE_NAME=ContosoSuites
 COSMOS_DB_SESSIONS_CONTAINER=Sessions
 COSMOS_DB_MESSAGES_CONTAINER=Messages
 ```
 
-### Authentication Options
+### Authentication
 
-#### 1. DefaultAzureCredential (Recommended for Development)
-```bash
-# Use your Azure CLI credentials
-az login
-# Set only the account URI
-COSMOS_DB_ACCOUNT_URI=https://your-account.documents.azure.com:443/
-```
+#### Localhost Development
+- Uses **DefaultAzureCredential** (Azure CLI, Visual Studio, etc.)
+- Run `az login` to authenticate
+- Ensure your user has "Cosmos DB Built-in Data Contributor" role
 
-#### 2. Connection String (Production)
-```bash
-# Use connection string for production deployment
-COSMOS_DB_CONNECTION_STRING=AccountEndpoint=...;AccountKey=...;
-```
+#### Azure Container Apps (Production)
+- Uses **ManagedIdentityCredential** automatically
+- Managed identity must have "Cosmos DB Built-in Data Contributor" role assigned
 
 ## 🚀 API Endpoints
 

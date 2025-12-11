@@ -118,25 +118,20 @@ Follow this checklist to get your SSO-enabled application up and running.
   - Throughput: 400 RU/s (autoscale recommended)
 
 ### Configure Cosmos DB Access
-- [ ] Option 1 - DefaultAzureCredential (Recommended for Development):
-  - [ ] Login to Azure CLI: `az login`
-  - [ ] Assign "Cosmos DB Built-in Data Contributor" role to your user
-  - [ ] Set only `COSMOS_DB_ACCOUNT_URI` in `.env`
-- [ ] Option 2 - Connection String (Production):
-  - [ ] Get connection string from Azure Portal
-  - [ ] Set `COSMOS_DB_CONNECTION_STRING` in `.env`
+- [ ] Login to Azure CLI: `az login`
+- [ ] Assign "Cosmos DB Built-in Data Contributor" role to your user
+- [ ] Set `COSMOS_DB_ACCOUNT_URI` in `.env`
+- [ ] Note: Uses DefaultAzureCredential for localhost, ManagedIdentityCredential for Azure Container Apps
 
 ### Update Backend Configuration for Chat History
 - [ ] Edit `backend/.env`:
   ```env
   # Cosmos DB Configuration for Chat History
+  # Uses DefaultAzureCredential for localhost and ManagedIdentityCredential for Azure Container Apps
   COSMOS_DB_ACCOUNT_URI=https://your-account.documents.azure.com:443/
   COSMOS_DB_DATABASE_NAME=ContosoSuites
   COSMOS_DB_SESSIONS_CONTAINER=Sessions
   COSMOS_DB_MESSAGES_CONTAINER=Messages
-  
-  # Optional: Use connection string instead
-  # COSMOS_DB_CONNECTION_STRING=AccountEndpoint=...;AccountKey=...;
   ```
 - [ ] Restart backend server
 

@@ -276,8 +276,8 @@ COPILOT_STUDIO_APP_CLIENT_ID=your-backend-client-id
 COPILOT_STUDIO_APP_CLIENT_SECRET=your-client-secret
 
 # Optional: Azure Cosmos DB Configuration (for Chat History)
+# Uses DefaultAzureCredential for localhost and ManagedIdentityCredential for Azure Container Apps
 COSMOS_DB_ACCOUNT_URI=https://your-account.documents.azure.com:443/
-COSMOS_DB_CONNECTION_STRING=AccountEndpoint=...;AccountKey=...;
 COSMOS_DB_DATABASE_NAME=ContosoSuites
 COSMOS_DB_SESSIONS_CONTAINER=Sessions
 COSMOS_DB_MESSAGES_CONTAINER=Messages

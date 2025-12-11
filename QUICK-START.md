@@ -92,13 +92,11 @@ Update your `backend/.env` file:
 
 ```env
 # Add these Cosmos DB settings
+# Uses DefaultAzureCredential for localhost and ManagedIdentityCredential for Azure Container Apps
 COSMOS_DB_ACCOUNT_URI=https://your-account.documents.azure.com:443/
 COSMOS_DB_DATABASE_NAME=CallCenterAI
 COSMOS_DB_SESSIONS_CONTAINER=Sessions
 COSMOS_DB_MESSAGES_CONTAINER=Messages
-
-# Optional: Use connection string instead of DefaultAzureCredential
-# COSMOS_DB_CONNECTION_STRING=AccountEndpoint=...;AccountKey=...;
 ```
 
 ### 4.3 Fix Cosmos DB Firewall (if needed)

@@ -107,11 +107,8 @@ Edit `backend/.env` file:
 
 ```bash
 # Azure Cosmos DB Configuration - Two Container Architecture
-# For localhost with DefaultAzureCredential (recommended for development)
+# Authentication: Uses DefaultAzureCredential for localhost and ManagedIdentityCredential for Azure Container Apps
 COSMOS_DB_ACCOUNT_URI=https://your-cosmosdb-account.documents.azure.com:443/
-
-# For production or when connection string is preferred
-COSMOS_DB_CONNECTION_STRING=AccountEndpoint=https://your-account.documents.azure.com:443/;AccountKey=your-key-here;
 
 # Database and container names - NEW TWO-CONTAINER SETUP
 COSMOS_DB_DATABASE_NAME=ContosoSuites
@@ -173,8 +170,8 @@ If you encounter firewall errors:
 
 ## Authentication Methods
 
-### DefaultAzureCredential (Recommended for Localhost)
-**Automatically used when:**
+### DefaultAzureCredential (Localhost Development)
+**Automatically used when running locally:**
 - Environment variable `ENVIRONMENT=development` is set, OR
 - Azure App Service environment is NOT detected
 - `COSMOS_DB_ACCOUNT_URI` is provided in .env
@@ -186,10 +183,11 @@ If you encounter firewall errors:
 4. Visual Studio/VS Code credentials
 5. Azure PowerShell credentials
 
-### Connection String (Fallback/Production)
-**Used when:**
-- `COSMOS_DB_CONNECTION_STRING` is provided
-- DefaultAzureCredential fails or is unavailable
+### ManagedIdentityCredential (Azure Container Apps)
+**Automatically used when deployed to Azure Container Apps:**
+- Azure environment detected (WEBSITE_SITE_NAME is set)
+- Uses the managed identity assigned to the container app
+- Requires Cosmos DB Data Contributor role assigned to the managed identity
 
 ## Testing the Setup
 
@@ -260,15 +258,21 @@ az cosmosdb database list --name your-cosmosdb-account --resource-group your-res
 ```
 
 ### Problem: DefaultAzureCredential not working
-**Solution:** Use connection string method
-1. Get connection string from Azure Portal
-2. Set `COSMOS_DB_CONNECTION_STRING` in .env
-3. Restart backend server
+**Solution:** Ensure you are logged in to Azure CLI
+1. Run `az login` to authenticate
+2. Verify your account: `az account show`
+3. Ensure your user has "Cosmos DB Built-in Data Contributor" role
+4. Restart backend server
 
 **Check:**
 ```bash
-# Get connection string
-az cosmosdb keys list --name your-cosmosdb-account --resource-group your-resource-group --type connection-strings
+# Verify you're logged in
+az account show
+
+# Verify your role assignment
+az cosmosdb sql role assignment list \
+  --account-name your-cosmosdb-account \
+  --resource-group your-resource-group
 ```
 
 ### Problem: Database/Container not created

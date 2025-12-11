@@ -26,90 +26,122 @@
 #   Internet → Frontend (Public) → Backend (Internal) → Private Endpoints → Azure Services
 
 param(
-    # Resource Configuration
-    [string]$ResourceGroup = "demo-ai-insights-rg",
-    [string]$Location = "eastus2",
-    [string]$ContainerRegistry = "demoaiinsightsacr",
-    [string]$KeyVaultName = "demoai-kv",
-    
-    # Sensitive parameters - will be loaded from deploy-config.ps1 if not provided
-    [string]$EntraFrontendClientId = "",
-    [string]$EntraBackendClientId = "",
-    [string]$EntraTenantId = "",
-    [string]$CopilotStudioClientSecret = "",
-    [string]$CopilotStudioEnvironmentId = "",
-    [string]$CopilotStudioSchemaName = "",
-    [string]$AiFoundryClientSecret = "",
-    
-    # Optional: Cosmos DB for Chat History (if not provided, chat history will be disabled)
-    [string]$CosmosDbAccountName = "demo-ai-insights-cosmosdb",
-    [string]$CosmosDbDatabaseName = "CallCenterAI",
-    [string]$CosmosDbSessionsContainer = "Sessions",
-    [string]$CosmosDbMessagesContainer = "Messages",
-    
-    # AI Foundry Configuration (required)
-    [string]$AiFoundryAccountName = "demo-ai-insights-foundry",
-    [string]$AiFoundryProjectName = "demo-ai-project",
-    [string]$AiFoundryAgentName = "CallCenterAgent",
-
-    # Power BI Configuration (optional - backend service principal authentication)
-    [string]$PowerBITenantId = "",
-    [string]$PowerBIClientId = "",
-    [string]$PowerBIClientSecret = "",
-    [string]$PowerBIWorkspaceId = "",
-    [string]$PowerBIReportId = "",
-
-    [string]$EnvironmentName = "demoai-env",
-    [string]$BackendAppName = "demoai-backend",
-    [string]$FrontendAppName = "demoai-frontend",
-    
-    # Network Security Configuration
-    [string]$VNetName = "demoai-vnet",
-    [string]$VNetAddressPrefix = "10.0.0.0/16",
-    [string]$ContainerAppsSubnetName = "containerapps-subnet",
-    [string]$ContainerAppsSubnetPrefix = "10.0.0.0/23",
-    [string]$PrivateEndpointsSubnetName = "privateendpoints-subnet",
-    [string]$PrivateEndpointsSubnetPrefix = "10.0.2.0/24",
-    
     # Deployment Mode Configuration
     [switch]$InfraOnly,  # If true, only deploy infrastructure (no code build/deploy)
     [switch]$CodeOnly    # If true, only build and deploy code (skip infrastructure)
 )
 
-# Load sensitive configuration from deploy-config.ps1 if it exists
+# Load configuration from deploy-config.ps1
 $configPath = Join-Path $PSScriptRoot "deploy-config.ps1"
 if (Test-Path $configPath) {
     Write-Host "Loading configuration from deploy-config.ps1..." -ForegroundColor Cyan
     . $configPath
-    
-    # Override parameters with values from config file if not explicitly provided
-    if ([string]::IsNullOrEmpty($EntraFrontendClientId) -and (Get-Variable -Name "EntraFrontendClientId" -Scope Script -ErrorAction SilentlyContinue)) {
-        $script:EntraFrontendClientId = $EntraFrontendClientId
-    }
-    if ([string]::IsNullOrEmpty($EntraBackendClientId) -and (Get-Variable -Name "EntraBackendClientId" -Scope Script -ErrorAction SilentlyContinue)) {
-        $script:EntraBackendClientId = $EntraBackendClientId
-    }
-    if ([string]::IsNullOrEmpty($EntraTenantId) -and (Get-Variable -Name "EntraTenantId" -Scope Script -ErrorAction SilentlyContinue)) {
-        $script:EntraTenantId = $EntraTenantId
-    }
-    if ([string]::IsNullOrEmpty($CopilotStudioClientSecret) -and (Get-Variable -Name "CopilotStudioClientSecret" -Scope Script -ErrorAction SilentlyContinue)) {
-        $script:CopilotStudioClientSecret = $CopilotStudioClientSecret
-    }
-    if ([string]::IsNullOrEmpty($CopilotStudioEnvironmentId) -and (Get-Variable -Name "CopilotStudioEnvironmentId" -Scope Script -ErrorAction SilentlyContinue)) {
-        $script:CopilotStudioEnvironmentId = $CopilotStudioEnvironmentId
-    }
-    if ([string]::IsNullOrEmpty($CopilotStudioSchemaName) -and (Get-Variable -Name "CopilotStudioSchemaName" -Scope Script -ErrorAction SilentlyContinue)) {
-        $script:CopilotStudioSchemaName = $CopilotStudioSchemaName
-    }
-    if ([string]::IsNullOrEmpty($AiFoundryClientSecret) -and (Get-Variable -Name "AiFoundryClientSecret" -Scope Script -ErrorAction SilentlyContinue)) {
-        $script:AiFoundryClientSecret = $AiFoundryClientSecret
-    }
-    
     Write-Host "   ✅ Configuration loaded" -ForegroundColor Green
 } else {
-    Write-Host "⚠️  deploy-config.ps1 not found" -ForegroundColor Yellow
+    Write-Host "❌ deploy-config.ps1 not found" -ForegroundColor Red
     Write-Host "   Copy deploy-config.example.ps1 to deploy-config.ps1 and fill in your values" -ForegroundColor White
     Write-Host ""
+    exit 1
+}
+
+# Set defaults for optional parameters if not defined in config
+if (-not (Get-Variable -Name "ResourceGroup" -ErrorAction SilentlyContinue)) {
+    $ResourceGroup = "demo-ai-insights-rg"
+}
+if (-not (Get-Variable -Name "Location" -ErrorAction SilentlyContinue)) {
+    $Location = "eastus2"
+}
+if (-not (Get-Variable -Name "ContainerRegistry" -ErrorAction SilentlyContinue)) {
+    $ContainerRegistry = "demoaiinsightsacr"
+}
+if (-not (Get-Variable -Name "KeyVaultName" -ErrorAction SilentlyContinue)) {
+    $KeyVaultName = "demoai-kv"
+}
+if (-not (Get-Variable -Name "CosmosDbAccountName" -ErrorAction SilentlyContinue)) {
+    $CosmosDbAccountName = "demo-ai-insights-cosmosdb"
+}
+if (-not (Get-Variable -Name "CosmosDbDatabaseName" -ErrorAction SilentlyContinue)) {
+    $CosmosDbDatabaseName = "CallCenterAI"
+}
+if (-not (Get-Variable -Name "CosmosDbSessionsContainer" -ErrorAction SilentlyContinue)) {
+    $CosmosDbSessionsContainer = "Sessions"
+}
+if (-not (Get-Variable -Name "CosmosDbMessagesContainer" -ErrorAction SilentlyContinue)) {
+    $CosmosDbMessagesContainer = "Messages"
+}
+if (-not (Get-Variable -Name "AiFoundryAccountName" -ErrorAction SilentlyContinue)) {
+    $AiFoundryAccountName = "demo-ai-insights-foundry"
+}
+if (-not (Get-Variable -Name "AiFoundryProjectName" -ErrorAction SilentlyContinue)) {
+    $AiFoundryProjectName = "demo-ai-project"
+}
+if (-not (Get-Variable -Name "AiFoundryAgentName" -ErrorAction SilentlyContinue)) {
+    $AiFoundryAgentName = "CallCenterAgent"
+}
+if (-not (Get-Variable -Name "EnvironmentName" -ErrorAction SilentlyContinue)) {
+    $EnvironmentName = "demoai-env"
+}
+if (-not (Get-Variable -Name "BackendAppName" -ErrorAction SilentlyContinue)) {
+    $BackendAppName = "demoai-backend"
+}
+if (-not (Get-Variable -Name "FrontendAppName" -ErrorAction SilentlyContinue)) {
+    $FrontendAppName = "demoai-frontend"
+}
+if (-not (Get-Variable -Name "VNetName" -ErrorAction SilentlyContinue)) {
+    $VNetName = "demoai-vnet"
+}
+if (-not (Get-Variable -Name "VNetAddressPrefix" -ErrorAction SilentlyContinue)) {
+    $VNetAddressPrefix = "10.0.0.0/16"
+}
+if (-not (Get-Variable -Name "ContainerAppsSubnetName" -ErrorAction SilentlyContinue)) {
+    $ContainerAppsSubnetName = "containerapps-subnet"
+}
+if (-not (Get-Variable -Name "ContainerAppsSubnetPrefix" -ErrorAction SilentlyContinue)) {
+    $ContainerAppsSubnetPrefix = "10.0.0.0/23"
+}
+if (-not (Get-Variable -Name "PrivateEndpointsSubnetName" -ErrorAction SilentlyContinue)) {
+    $PrivateEndpointsSubnetName = "privateendpoints-subnet"
+}
+if (-not (Get-Variable -Name "PrivateEndpointsSubnetPrefix" -ErrorAction SilentlyContinue)) {
+    $PrivateEndpointsSubnetPrefix = "10.0.2.0/24"
+}
+
+# Set defaults for optional secrets (empty strings)
+if (-not (Get-Variable -Name "EntraFrontendClientId" -ErrorAction SilentlyContinue)) {
+    $EntraFrontendClientId = ""
+}
+if (-not (Get-Variable -Name "EntraBackendClientId" -ErrorAction SilentlyContinue)) {
+    $EntraBackendClientId = ""
+}
+if (-not (Get-Variable -Name "EntraTenantId" -ErrorAction SilentlyContinue)) {
+    $EntraTenantId = ""
+}
+if (-not (Get-Variable -Name "CopilotStudioClientSecret" -ErrorAction SilentlyContinue)) {
+    $CopilotStudioClientSecret = ""
+}
+if (-not (Get-Variable -Name "CopilotStudioEnvironmentId" -ErrorAction SilentlyContinue)) {
+    $CopilotStudioEnvironmentId = ""
+}
+if (-not (Get-Variable -Name "CopilotStudioSchemaName" -ErrorAction SilentlyContinue)) {
+    $CopilotStudioSchemaName = ""
+}
+if (-not (Get-Variable -Name "AiFoundryClientSecret" -ErrorAction SilentlyContinue)) {
+    $AiFoundryClientSecret = ""
+}
+if (-not (Get-Variable -Name "PowerBITenantId" -ErrorAction SilentlyContinue)) {
+    $PowerBITenantId = ""
+}
+if (-not (Get-Variable -Name "PowerBIClientId" -ErrorAction SilentlyContinue)) {
+    $PowerBIClientId = ""
+}
+if (-not (Get-Variable -Name "PowerBIClientSecret" -ErrorAction SilentlyContinue)) {
+    $PowerBIClientSecret = ""
+}
+if (-not (Get-Variable -Name "PowerBIWorkspaceId" -ErrorAction SilentlyContinue)) {
+    $PowerBIWorkspaceId = ""
+}
+if (-not (Get-Variable -Name "PowerBIReportId" -ErrorAction SilentlyContinue)) {
+    $PowerBIReportId = ""
 }
 
 # Validate required sensitive parameters
@@ -1362,16 +1394,17 @@ if (-not $InfraOnly) {
         --build-arg "VITE_ENTRA_CLIENT_ID=$EntraFrontendClientId" `
         --build-arg "VITE_ENTRA_TENANT_ID=$EntraTenantId" `
         --build-arg "VITE_API_SCOPE=api://$EntraBackendClientId/access_as_user" `
-        --build-arg "VITE_API_BASE_URL=$backendUrl" `
-        --build-arg "VITE_REDIRECT_URI=$frontendUrl" `
-        --build-arg "VITE_POST_LOGOUT_REDIRECT_URI=$frontendUrl" `
-        --build-arg "VITE_TENANT_ID=$VITE_TENANT_ID" `
-        --build-arg "VITE_TENANT_NAME=$VITE_TENANT_NAME" `
-        --build-arg "VITE_TENANT_LOGO_URL=$VITE_TENANT_LOGO_URL" `
-        --build-arg "VITE_TENANT_FAVICON_URL=$VITE_TENANT_FAVICON_URL" `
-        --build-arg "VITE_TENANT_PRIMARY_COLOR=$VITE_TENANT_PRIMARY_COLOR" `
-        --build-arg "VITE_TENANT_SECONDARY_COLOR=$VITE_TENANT_SECONDARY_COLOR" `
+        --build-arg "VITE_API_BASE_URL='$backendUrl'" `
+        --build-arg "VITE_REDIRECT_URI='$frontendUrl'" `
+        --build-arg "VITE_POST_LOGOUT_REDIRECT_URI='$frontendUrl'" `
+        --build-arg "VITE_TENANT_ID='$VITE_TENANT_ID'" `
+        --build-arg "VITE_TENANT_NAME='$VITE_TENANT_NAME'" `
+        --build-arg "VITE_TENANT_LOGO_URL='$VITE_TENANT_LOGO_URL'" `
+        --build-arg "VITE_TENANT_FAVICON_URL='$VITE_TENANT_FAVICON_URL'" `
+        --build-arg "VITE_TENANT_PRIMARY_COLOR='$VITE_TENANT_PRIMARY_COLOR'" `
+        --build-arg "VITE_TENANT_SECONDARY_COLOR='$VITE_TENANT_SECONDARY_COLOR'" `
         .
+        
     Pop-Location
 
     # Deploy or update frontend container app (external ingress - publicly accessible)
