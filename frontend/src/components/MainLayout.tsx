@@ -150,8 +150,19 @@ function MainLayoutContent({ children, tenantConfig, refreshTrigger }: MainLayou
     setAiFoundryConversationsError(null);
     
     try {
-      // Get AI Foundry agent ID from environment or use the configured agent ID
-      const aiFoundryAgentId = import.meta.env.VITE_AI_FOUNDRY_AGENT_ID || 'asst_NDF10AoxAz8KYYrLQS4lG1Eh';
+      // First, get the session to retrieve the actual agent ID from backend
+      let aiFoundryAgentId = import.meta.env.VITE_AI_FOUNDRY_AGENT_ID;
+      
+      try {
+        const sessionResponse = await apiClient.post<{agentId: string}>('/api/ai-foundry/token');
+        if (sessionResponse.data?.agentId) {
+          aiFoundryAgentId = sessionResponse.data.agentId;
+        }
+      } catch (sessionError) {
+        console.warn('Could not fetch AI Foundry session, using fallback agent ID');
+      }
+      
+      // Use the actual agent ID from backend or fallback
       const response = await apiClient.get('/api/chat/conversations', {
         params: { agent_id: aiFoundryAgentId }
       });

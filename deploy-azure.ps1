@@ -1213,6 +1213,8 @@ if (-not $InfraOnly) {
 
             if ($cosmosControlPlaneRole.assignableScopes -contains $resourceGroupId) {
                 Write-Host "   ✅ Current Resource Group is in the Assignable scope" -ForegroundColor Cyan
+                
+                Remove-Item .\temp-role-definition.json -Force
             }
             else {
                 Write-Host "   - Adding current Resource Group to Assignable scopes" -ForegroundColor Yellow
