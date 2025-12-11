@@ -52,6 +52,13 @@ param(
     [string]$AiFoundryProjectName = "demo-ai-project",
     [string]$AiFoundryAgentName = "CallCenterAgent",
 
+    # Power BI Configuration (optional - backend service principal authentication)
+    [string]$PowerBITenantId = "",
+    [string]$PowerBIClientId = "",
+    [string]$PowerBIClientSecret = "",
+    [string]$PowerBIWorkspaceId = "",
+    [string]$PowerBIReportId = "",
+
     [string]$EnvironmentName = "demoai-env",
     [string]$BackendAppName = "demoai-backend",
     [string]$FrontendAppName = "demoai-frontend",
@@ -607,6 +614,15 @@ if (-not $CodeOnly) {
         Write-Host "   ✅ Stored AI Foundry client secret" -ForegroundColor Green
     }
 
+    # Store Power BI client secret
+    if ($PowerBIClientSecret) {
+        az keyvault secret set `
+            --vault-name $KeyVaultName `
+            --name "powerbi-client-secret" `
+            --value $PowerBIClientSecret | Out-Null
+        Write-Host "   ✅ Stored Power BI client secret" -ForegroundColor Green
+    }
+
     # Disable public access again
     Write-Host "Disabling public access to Key Vault..." -ForegroundColor Green
     az keyvault update `
@@ -1062,6 +1078,20 @@ if (-not $InfraOnly) {
         "AI_FOUNDRY_AGENT_ID=$AiFoundryAgentId"
     )
 
+    # Add Power BI environment variables if configured
+    if ($PowerBIClientId -and $PowerBIClientSecret -and $PowerBIWorkspaceId -and $PowerBIReportId) {
+        # Use provided tenant ID or default to Entra tenant ID
+        $powerBITenantId = if ($PowerBITenantId) { $PowerBITenantId } else { $EntraTenantId }
+        
+        $backendEnvVars += @(
+            "POWERBI_TENANT_ID=$powerBITenantId"
+            "POWERBI_CLIENT_ID=$PowerBIClientId"
+            "POWERBI_WORKSPACE_ID=$PowerBIWorkspaceId"
+            "POWERBI_REPORT_ID=$PowerBIReportId"
+        )
+        Write-Host "   ℹ️  Power BI configuration will be added (service principal auth)" -ForegroundColor Cyan
+    }
+
     # Deploy or update backend container app (internal ingress only - accessible only within VNet)
     Write-Host ""
     
@@ -1134,7 +1164,63 @@ if (-not $InfraOnly) {
     if ($CosmosDbAccountName) {
         Write-Host "Assigning Cosmos DB access to managed identity..." -ForegroundColor Green
 
-        $cosmosDbResourceId = "/subscriptions/$(az account show --query id -o tsv)/resourceGroups/$ResourceGroup/providers/Microsoft.DocumentDB/databaseAccounts/$CosmosDbAccountName"
+        $resourceGroupId = $(az group show --name $ResourceGroup --query id -o tsv)
+        $cosmosDbResourceId = "$resourceGroupId/providers/Microsoft.DocumentDB/databaseAccounts/$CosmosDbAccountName"
+
+        # Getting Azure Cosmos DB Control Plane Owner Role definition existance
+
+        $cosmosControlPlaneRoleId = az role definition list --query "[?roleName=='Azure Cosmos DB Control Plane Owner'].id" -o tsv
+
+        if ($cosmosControlPlaneRoleId) {
+            Write-Host "   ✅ Azure Cosmos DB Control Plane Owner role definition exists" -ForegroundColor Cyan
+
+            $(az role definition show --id $cosmosControlPlaneRoleId) | Out-File -FilePath ".\temp-role-definition.json"
+
+            # Check if current Resource Group exists on the Assignable scope
+            $cosmosControlPlaneRole = Get-Content -Raw ".\temp-role-definition.json" | ConvertFrom-Json
+
+            if ($cosmosControlPlaneRole.assignableScopes -contains $resourceGroupId) {
+                Write-Host "   ✅ Current Resource Group is in the Assignable scope" -ForegroundColor Cyan
+            }
+            else {
+                Write-Host "   - Adding current Resource Group to Assignable scopes" -ForegroundColor Yellow
+                
+                $cosmosControlPlaneRole.assignableScopes+=$resourceGroupId
+                
+                ($cosmosControlPlaneRole | ConvertTo-Json -Depth 5) | Out-File -FilePath ".\temp-role-definition.json" -Force
+                
+                az role definition update --role-definition .\temp-role-definition.json
+
+                Remove-Item .\temp-role-definition.json -Force
+            }
+
+        } else {
+            Write-Host "   - Creating Azure Cosmos DB Control Plane Owner role definition" -ForegroundColor Yellow
+            
+'{
+  "Name": "Azure Cosmos DB Control Plane Owner",
+  "IsCustom": true,
+  "Description": "Can perform all control plane actions for an Azure Cosmos DB account.",
+  "Actions": [
+    "Microsoft.DocumentDb/*"
+  ],
+  "AssignableScopes": [
+    "[__RESOURCE_GROUP_ID__]"
+  ]
+}'.Replace('[__RESOURCE_GROUP_ID__]', "$(az group show --name $ResourceGroup --query id -o tsv)") | Out-File -FilePath ".\temp-role-definition.json"
+
+            az role definition create --role-definition .\temp-role-definition.json
+
+            Remove-Item .\temp-role-definition.json -Force
+        }
+
+        $cosmosControlPlaneRoleId = az role definition list --query "[?roleName=='Azure Cosmos DB Control Plane Owner'].id" -o tsv
+
+
+        az role assignment create `
+        --assignee $principalId `
+        --role $cosmosControlPlaneRoleId `
+        --scope $resourceGroupId | Out-Null
 
         # Getting the role definition ID
         $cosmosDbDataCustomRoleId = az cosmosdb sql role definition list --resource-group $ResourceGroup --account-name $CosmosDbAccountName --query "[?roleName=='Azure Cosmos DB for NoSQL Data Plane Owner'].id" --output tsv
@@ -1240,6 +1326,20 @@ if (-not $InfraOnly) {
         Write-Host "   ✅ AI Foundry secret configured" -ForegroundColor Green
     }
 
+    if ($PowerBIClientSecret) {
+        Write-Host "Configuring Power BI secret from Key Vault..." -ForegroundColor Green
+        az containerapp secret set `
+            --name $BackendAppName `
+            --resource-group $ResourceGroup `
+            --secrets "powerbi-secret=keyvaultref:https://$KeyVaultName.vault.azure.net/secrets/powerbi-client-secret,identityref:system"
+    
+        az containerapp update `
+            --name $BackendAppName `
+            --resource-group $ResourceGroup `
+            --set-env-vars "POWERBI_CLIENT_SECRET=secretref:powerbi-secret"
+        Write-Host "   ✅ Power BI secret configured" -ForegroundColor Green
+    }
+
     # Get backend URL
     $backendUrl = az containerapp show `
         --name $BackendAppName `
@@ -1262,7 +1362,8 @@ if (-not $InfraOnly) {
         --build-arg "VITE_ENTRA_CLIENT_ID=$EntraFrontendClientId" `
         --build-arg "VITE_ENTRA_TENANT_ID=$EntraTenantId" `
         --build-arg "VITE_API_SCOPE=api://$EntraBackendClientId/access_as_user" `
-        --build-arg "VITE_API_BASE_URL=$backendUrl" `        --build-arg "VITE_REDIRECT_URI=$frontendUrl" `
+        --build-arg "VITE_API_BASE_URL=$backendUrl" `
+        --build-arg "VITE_REDIRECT_URI=$frontendUrl" `
         --build-arg "VITE_POST_LOGOUT_REDIRECT_URI=$frontendUrl" `
         --build-arg "VITE_TENANT_ID=$VITE_TENANT_ID" `
         --build-arg "VITE_TENANT_NAME=$VITE_TENANT_NAME" `
