@@ -37,6 +37,7 @@ import apiClient from '../services/apiClient';
 import { ConversationProvider, useConversationContext } from '../contexts/ConversationContext';
 import { getLogoSrc } from '../config/tenantConfig';
 import UserMenu from './UserMenu';
+import { UIConfig, getTabConfig } from '../services/featureConfig';
 
 // Chat History types (matching ChatHistoryDrawer)
 interface ConversationSummary {
@@ -55,13 +56,14 @@ const drawerWidth = 260;
 interface MainLayoutProps {
   children: ReactNode;
   tenantConfig: TenantConfig;
+  uiConfig: UIConfig;
 }
 
 interface MainLayoutContentProps extends MainLayoutProps {
   refreshTrigger?: number;
 }
 
-function MainLayoutContent({ children, tenantConfig, refreshTrigger }: MainLayoutContentProps) {
+function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }: MainLayoutContentProps) {
   const theme = useTheme();
   const isMobile = useMediaQuery(theme.breakpoints.down('md'));
   const [mobileOpen, setMobileOpen] = useState(false);
@@ -241,10 +243,26 @@ function MainLayoutContent({ children, tenantConfig, refreshTrigger }: MainLayou
     }
   };
 
-  const menuItems = [
-    { text: 'Dashboard', icon: <DashboardIcon />, path: '/dashboard' },
-    { text: 'Power BI Report', icon: <BarChartIcon />, path: '/powerbi' },
-  ];
+  // Build menu items based on UI configuration
+  const menuItems = [];
+  
+  const dashboardTab = getTabConfig(uiConfig, 'dashboard');
+  if (dashboardTab?.display) {
+    menuItems.push({ 
+      text: dashboardTab.labels.name, 
+      icon: <DashboardIcon />, 
+      path: '/dashboard' 
+    });
+  }
+  
+  const powerbiTab = getTabConfig(uiConfig, 'powerbi');
+  if (powerbiTab?.display) {
+    menuItems.push({ 
+      text: powerbiTab.labels.name, 
+      icon: <BarChartIcon />, 
+      path: '/powerbi' 
+    });
+  }
 
   const drawer = (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -323,57 +341,59 @@ function MainLayoutContent({ children, tenantConfig, refreshTrigger }: MainLayou
           </ListItem>
         ))}
 
-        {/* CS Chatbot with Submenu */}
-        <ListItem disablePadding sx={{ px: 1 }}>
-          <ListItemButton
-            selected={location.pathname === '/chatbot'}
-            onClick={() => {
-              navigate('/chatbot');
-              if (isMobile) setMobileOpen(false);
-            }}
-            sx={{
-              borderRadius: 1,
-              mb: 0.5,
-              '&.Mui-selected': {
-                bgcolor: 'primary.main',
-                color: 'white',
-                '&:hover': {
-                  bgcolor: 'primary.dark',
-                },
-                '& .MuiListItemIcon-root': {
-                  color: 'white',
-                },
-              },
-            }}
-          >
-            <ListItemIcon
-              sx={{
-                color: location.pathname === '/chatbot' ? 'white' : 'inherit',
-              }}
-            >
-              <ChatIcon />
-            </ListItemIcon>
-            <ListItemText primary="Chatbot" />
-            <IconButton
-              size="small"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleChatSubmenuToggle();
-              }}
-              sx={{
-                color: location.pathname === '/chatbot' ? 'white' : 'inherit',
-                '&:hover': {
-                  bgcolor: 'rgba(0, 0, 0, 0.04)',
-                },
-              }}
-            >
-              {chatSubmenuOpen ? <ExpandLess /> : <ExpandMore />}
-            </IconButton>
-          </ListItemButton>
-        </ListItem>
+        {/* Copilot Studio Chatbot with Submenu */}
+        {getTabConfig(uiConfig, 'copilot-studio')?.display && (
+          <>
+            <ListItem disablePadding sx={{ px: 1 }}>
+              <ListItemButton
+                selected={location.pathname === '/chatbot'}
+                onClick={() => {
+                  navigate('/chatbot');
+                  if (isMobile) setMobileOpen(false);
+                }}
+                sx={{
+                  borderRadius: 1,
+                  mb: 0.5,
+                  '&.Mui-selected': {
+                    bgcolor: 'primary.main',
+                    color: 'white',
+                    '&:hover': {
+                      bgcolor: 'primary.dark',
+                    },
+                    '& .MuiListItemIcon-root': {
+                      color: 'white',
+                    },
+                  },
+                }}
+              >
+                <ListItemIcon
+                  sx={{
+                    color: location.pathname === '/chatbot' ? 'white' : 'inherit',
+                  }}
+                >
+                  <ChatIcon />
+                </ListItemIcon>
+                <ListItemText primary={getTabConfig(uiConfig, 'copilot-studio')?.labels.name} />
+                <IconButton
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleChatSubmenuToggle();
+                  }}
+                  sx={{
+                    color: location.pathname === '/chatbot' ? 'white' : 'inherit',
+                    '&:hover': {
+                      bgcolor: 'rgba(0, 0, 0, 0.04)',
+                    },
+                  }}
+                >
+                  {chatSubmenuOpen ? <ExpandLess /> : <ExpandMore />}
+                </IconButton>
+              </ListItemButton>
+            </ListItem>
 
-        {/* Chat History Submenu */}
-        <Collapse in={chatSubmenuOpen} timeout="auto" unmountOnExit>
+            {/* Chat History Submenu */}
+            <Collapse in={chatSubmenuOpen} timeout="auto" unmountOnExit>
           <List component="div" disablePadding sx={{ pl: 1 }}>
             {/* Chat History Header with better spacing */}
             <ListItem disablePadding sx={{ px: 1 }}>
@@ -538,58 +558,62 @@ function MainLayoutContent({ children, tenantConfig, refreshTrigger }: MainLayou
             )}
           </List>
         </Collapse>
+        </>
+        )}
 
         {/* AI Foundry Chatbot with Submenu */}
-        <ListItem disablePadding sx={{ px: 1 }}>
-          <ListItemButton
-            selected={location.pathname === '/ai-foundry'}
-            onClick={() => {
-              navigate('/ai-foundry');
-              if (isMobile) setMobileOpen(false);
-            }}
-            sx={{
-              borderRadius: 1,
-              mb: 0.5,
-              '&.Mui-selected': {
-                bgcolor: 'primary.main',
-                color: 'white',
-                '&:hover': {
-                  bgcolor: 'primary.dark',
-                },
-                '& .MuiListItemIcon-root': {
-                  color: 'white',
-                },
-              },
-            }}
-          >
-            <ListItemIcon
-              sx={{
-                color: location.pathname === '/ai-foundry' ? 'white' : 'inherit',
-              }}
-            >
-              <ChatIcon />
-            </ListItemIcon>
-            <ListItemText primary="AI Foundry" />
-            <IconButton
-              size="small"
-              onClick={(e) => {
-                e.stopPropagation();
-                handleAiFoundrySubmenuToggle();
-              }}
-              sx={{
-                color: location.pathname === '/ai-foundry' ? 'white' : 'inherit',
-                '&:hover': {
-                  bgcolor: 'rgba(0, 0, 0, 0.04)',
-                },
-              }}
-            >
-              {aiFoundrySubmenuOpen ? <ExpandLess /> : <ExpandMore />}
-            </IconButton>
-          </ListItemButton>
-        </ListItem>
+        {getTabConfig(uiConfig, 'ai-foundry')?.display && (
+          <>
+            <ListItem disablePadding sx={{ px: 1 }}>
+              <ListItemButton
+                selected={location.pathname === '/ai-foundry'}
+                onClick={() => {
+                  navigate('/ai-foundry');
+                  if (isMobile) setMobileOpen(false);
+                }}
+                sx={{
+                  borderRadius: 1,
+                  mb: 0.5,
+                  '&.Mui-selected': {
+                    bgcolor: 'primary.main',
+                    color: 'white',
+                    '&:hover': {
+                      bgcolor: 'primary.dark',
+                    },
+                    '& .MuiListItemIcon-root': {
+                      color: 'white',
+                    },
+                  },
+                }}
+              >
+                <ListItemIcon
+                  sx={{
+                    color: location.pathname === '/ai-foundry' ? 'white' : 'inherit',
+                  }}
+                >
+                  <ChatIcon />
+                </ListItemIcon>
+                <ListItemText primary={getTabConfig(uiConfig, 'ai-foundry')?.labels.name} />
+                <IconButton
+                  size="small"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleAiFoundrySubmenuToggle();
+                  }}
+                  sx={{
+                    color: location.pathname === '/ai-foundry' ? 'white' : 'inherit',
+                    '&:hover': {
+                      bgcolor: 'rgba(0, 0, 0, 0.04)',
+                    },
+                  }}
+                >
+                  {aiFoundrySubmenuOpen ? <ExpandLess /> : <ExpandMore />}
+                </IconButton>
+              </ListItemButton>
+            </ListItem>
 
-        {/* AI Foundry History Submenu */}
-        <Collapse in={aiFoundrySubmenuOpen} timeout="auto" unmountOnExit>
+            {/* AI Foundry History Submenu */}
+            <Collapse in={aiFoundrySubmenuOpen} timeout="auto" unmountOnExit>
           <List component="div" disablePadding sx={{ pl: 1 }}>
             {/* New Chat Button */}
             <ListItem disablePadding sx={{ px: 1 }}>
@@ -754,6 +778,8 @@ function MainLayoutContent({ children, tenantConfig, refreshTrigger }: MainLayou
             )}
           </List>
         </Collapse>
+        </>
+        )}
       </List>
     </Box>
   );

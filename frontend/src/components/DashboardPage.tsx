@@ -31,6 +31,7 @@ import {
 } from 'recharts';
 import KPICard from './KPICard';
 import apiClient from '../services/apiClient';
+import { UIConfig, getTabConfig } from '../services/featureConfig';
 
 // Types for KPI data
 interface KPIData {
@@ -48,7 +49,11 @@ interface ChartData {
   agentPerformance: Array<{ agent: string; calls: number; avgTime: number; satisfaction: number }>;
 }
 
-export default function DashboardPage() {
+interface DashboardPageProps {
+  uiConfig: UIConfig;
+}
+
+export default function DashboardPage({ uiConfig }: DashboardPageProps) {
   const [kpiData, setKpiData] = useState<KPIData | null>(null);
   const [chartData, setChartData] = useState<ChartData | null>(null);
   const [loading, setLoading] = useState(true);
@@ -76,13 +81,15 @@ export default function DashboardPage() {
   // Colors for charts
   const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
 
+  const dashboardTab = getTabConfig(uiConfig, 'dashboard');
+
   return (
     <Box>
       <Typography variant="h4" fontWeight={600} gutterBottom>
-        Dashboard
+        {dashboardTab?.labels.title || 'Dashboard'}
       </Typography>
       <Typography variant="body1" color="text.secondary" sx={{ mb: 3 }}>
-        Real-time insights for call center operations
+        {dashboardTab?.labels.subtitle || 'Real-time insights for call center operations'}
       </Typography>
 
       {/* KPI Cards */}

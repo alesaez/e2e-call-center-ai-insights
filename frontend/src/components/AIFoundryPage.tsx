@@ -33,6 +33,7 @@ import remarkGfm from 'remark-gfm';
 import apiClient from '../services/apiClient';
 import QuestionCards from './QuestionCards';
 import ReferenceProcessor from './ReferenceProcessor';
+import { UIConfig, getTabConfig } from '../services/featureConfig';
 
 import { predefinedQuestions } from '../config/chatQuestions';
 
@@ -397,7 +398,11 @@ const AdaptiveCardRenderer = ({
   );
 };
 
-export default function AIFoundryPage() {
+interface AIFoundryPageProps {
+  uiConfig: UIConfig;
+}
+
+export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
   const theme = useTheme();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const location = useLocation();
@@ -989,19 +994,19 @@ export default function AIFoundryPage() {
   };
 
 
-
+  const aiFoundryTab = getTabConfig(uiConfig, 'ai-foundry');
 
 
   return (
     <Box sx={{ p: 3, height: 'calc(100vh - 100px)', display: 'flex', flexDirection: 'column' }}>
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
         <Box>
-          <Typography variant="h4">
-            {currentConversationTitle || 'AI Foundry Chat'}
+          <Typography variant="h4" fontWeight={600}>
+            {aiFoundryTab?.labels.title || 'AI Foundry Chat'}
           </Typography>
           {currentConversationTitle && (
-            <Typography variant="caption" color="text.secondary">
-              AI Foundry Chat
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              Current conversation: {currentConversationTitle}
             </Typography>
           )}
         </Box>
@@ -1014,8 +1019,8 @@ export default function AIFoundryPage() {
         </Button>
       </Box>
       
-      <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
-        Chat with our Azure AI Foundry assistant to get insights about call center performance, agent metrics, and more.
+      <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
+        {aiFoundryTab?.labels.subtitle || 'Chat with our Azure AI Foundry assistant to get insights about call center performance, agent metrics, and more.'}
       </Typography>
 
       {session && (

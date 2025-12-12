@@ -12,81 +12,145 @@ import SettingsPage from './components/SettingsPage';
 import PowerBIReportPage from './components/PowerBIReportPage';
 import { createAppTheme, getTenantConfig, TenantConfig, defaultTenantConfig } from './theme/theme';
 import { applyFavicon, updateDocumentTitle } from './config/tenantConfig';
+import { getUIConfig, UIConfig, shouldDisplayTab } from './services/featureConfig';
+import { CircularProgress, Box } from '@mui/material';
 
 function App() {
   const [tenantConfig, setTenantConfig] = useState<TenantConfig>(defaultTenantConfig);
   const [theme, setTheme] = useState(createAppTheme(defaultTenantConfig));
+  const [uiConfig, setUIConfig] = useState<UIConfig | null>(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    // Load tenant configuration
-    const loadTenantConfig = async () => {
-      const config = await getTenantConfig();
-      setTenantConfig(config);
-      setTheme(createAppTheme(config));
-      
-      // Apply branding
-      applyFavicon(config.faviconUrl);
-      updateDocumentTitle(config.name);
+    // Load tenant configuration and UI configuration
+    const loadConfigurations = async () => {
+      try {
+        // Load tenant config
+        const config = await getTenantConfig();
+        setTenantConfig(config);
+        setTheme(createAppTheme(config));
+        
+        // Apply branding
+        applyFavicon(config.faviconUrl);
+        updateDocumentTitle(config.name);
+
+        // Load UI config
+        const ui = await getUIConfig();
+        setUIConfig(ui);
+      } catch (error) {
+        console.error('Error loading configurations:', error);
+      } finally {
+        setLoading(false);
+      }
     };
-    loadTenantConfig();
+    
+    loadConfigurations();
   }, []);
+
+  // Show loading spinner while configurations are being loaded
+  if (loading || !uiConfig) {
+    return (
+      <ThemeProvider theme={theme}>
+        <CssBaseline />
+        <Box
+          sx={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            height: '100vh',
+          }}
+        >
+          <CircularProgress />
+        </Box>
+      </ThemeProvider>
+    );
+  }
+
+  // Determine the default route based on enabled features
+  const getDefaultRoute = () => {
+    if (shouldDisplayTab(uiConfig, 'dashboard')) return '/dashboard';
+    if (shouldDisplayTab(uiConfig, 'copilot-studio')) return '/chatbot';
+    if (shouldDisplayTab(uiConfig, 'ai-foundry')) return '/ai-foundry';
+    if (shouldDisplayTab(uiConfig, 'powerbi')) return '/powerbi';
+    return '/settings';
+  };
 
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route
-          path="/dashboard"
-          element={
-            <ProtectedRoute>
-              <MainLayout tenantConfig={tenantConfig}>
-                <DashboardPage />
-              </MainLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/chatbot"
-          element={
-            <ProtectedRoute>
-              <MainLayout tenantConfig={tenantConfig}>
-                <ChatbotPage />
-              </MainLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/ai-foundry"
-          element={
-            <ProtectedRoute>
-              <MainLayout tenantConfig={tenantConfig}>
-                <AIFoundryPage />
-              </MainLayout>
-            </ProtectedRoute>
-          }
-        />
+        
+        {/* Dashboard Route */}
+        {shouldDisplayTab(uiConfig, 'dashboard') && (
+          <Route
+            path="/dashboard"
+            element={
+              <ProtectedRoute>
+                <MainLayout tenantConfig={tenantConfig} uiConfig={uiConfig}>
+                  <DashboardPage uiConfig={uiConfig} />
+                </MainLayout>
+              </ProtectedRoute>
+            }
+          />
+        )}
+        
+        {/* Copilot Studio Chatbot Route */}
+        {shouldDisplayTab(uiConfig, 'copilot-studio') && (
+          <Route
+            path="/chatbot"
+            element={
+              <ProtectedRoute>
+                <MainLayout tenantConfig={tenantConfig} uiConfig={uiConfig}>
+                  <ChatbotPage uiConfig={uiConfig} />
+                </MainLayout>
+              </ProtectedRoute>
+            }
+          />
+        )}
+        
+        {/* AI Foundry Route */}
+        {shouldDisplayTab(uiConfig, 'ai-foundry') && (
+          <Route
+            path="/ai-foundry"
+            element={
+              <ProtectedRoute>
+                <MainLayout tenantConfig={tenantConfig} uiConfig={uiConfig}>
+                  <AIFoundryPage uiConfig={uiConfig} />
+                </MainLayout>
+              </ProtectedRoute>
+            }
+          />
+        )}
+        
+        {/* Power BI Route */}
+        {shouldDisplayTab(uiConfig, 'powerbi') && (
+          <Route
+            path="/powerbi"
+            element={
+              <ProtectedRoute>
+                <MainLayout tenantConfig={tenantConfig} uiConfig={uiConfig}>
+                  <PowerBIReportPage uiConfig={uiConfig} />
+                </MainLayout>
+              </ProtectedRoute>
+            }
+          />
+        )}
+        
+        {/* Settings Route - Always enabled */}
         <Route
           path="/settings"
           element={
             <ProtectedRoute>
-              <MainLayout tenantConfig={tenantConfig}>
-                <SettingsPage />
+              <MainLayout tenantConfig={tenantConfig} uiConfig={uiConfig}>
+                <SettingsPage uiConfig={uiConfig} />
               </MainLayout>
             </ProtectedRoute>
           }
         />
-        <Route
-          path="/powerbi"
-          element={
-            <ProtectedRoute>
-              <MainLayout tenantConfig={tenantConfig}>
-                <PowerBIReportPage />
-              </MainLayout>
-            </ProtectedRoute>
-          }
-        />
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        
+        {/* Default Route */}
+        <Route path="/" element={<Navigate to={getDefaultRoute()} replace />} />
       </Routes>
     </ThemeProvider>
   );

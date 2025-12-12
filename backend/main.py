@@ -277,6 +277,44 @@ async def health_check():
     
     return health_status
 
+@app.get("/api/config/ui")
+async def get_ui_config():
+    """
+    Public endpoint to get UI configuration.
+    Returns tab configuration with environment-specific overrides applied.
+    """
+    return settings.ui_config.get_api_response()
+
+
+# Legacy endpoint for backwards compatibility
+@app.get("/api/config/features")
+async def get_feature_config():
+    """
+    DEPRECATED: Use /api/config/ui instead.
+    Legacy endpoint for feature configuration.
+    """
+    # Map new UI config to old format for backwards compatibility
+    ui_config = settings.ui_config
+    
+    tab_map = {
+        "dashboard": "dashboard",
+        "copilot-studio": "copilotStudio",
+        "ai-foundry": "aiFoundry",
+        "powerbi": "powerbi",
+        "settings": "settings"
+    }
+    
+    features = {}
+    for tab in ui_config.get_all_tabs():
+        legacy_id = tab_map.get(tab.id)
+        if legacy_id:
+            features[legacy_id] = {
+                "enabled": tab.display,
+                "displayName": tab.labels.name
+            }
+    
+    return {"features": features}
+
 # Protected endpoints
 @app.get("/api/user/profile")
 async def get_user_profile(token_payload: Dict = Depends(verify_token)):

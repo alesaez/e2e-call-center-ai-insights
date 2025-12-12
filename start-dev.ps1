@@ -1,6 +1,8 @@
 # Quick Start Script for Local Development
 # Run this script to set up and start both frontend and backend
 
+param([switch]$reload)
+
 Write-Host "=== Call Center AI Insights - Quick Start ===" -ForegroundColor Cyan
 Write-Host ""
 
@@ -77,8 +79,12 @@ Write-Host ""
 # Start backend in background using virtual environment Python
 $backendPath = Join-Path $PWD "backend"
 $backendPython = Join-Path $backendPath "venv\Scripts\python.exe"
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$backendPath'; & '$backendPython' -m uvicorn main:app --reload --port 8000"
-
+if ($reload) {
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$backendPath'; & '$backendPython' -m uvicorn main:app --reload --port 8000"
+}
+else {
+    Start-Process powershell -ArgumentList "-NoExit", "-Command", "cd '$backendPath'; & '$backendPython' -m uvicorn main:app --port 8000"   
+}
 # Wait a bit for backend to start
 Start-Sleep -Seconds 3
 

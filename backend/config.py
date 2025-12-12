@@ -7,6 +7,7 @@ from pydantic_settings import BaseSettings
 from typing import List, Optional
 from pathlib import Path
 import logging
+from ui_config import get_ui_config_manager
 
 # Configure Azure SDK logging to be less verbose (globally)
 # Can be overridden with AZURE_SDK_VERBOSE_LOGGING=true environment variable
@@ -116,6 +117,7 @@ class PowerBISettings(BaseSettings):
     workspace_id: str  # Power BI workspace (group) ID
     report_id: str  # Power BI report ID
 
+
 class Settings(BaseSettings):
     """
     Application settings loaded from environment variables.
@@ -159,28 +161,53 @@ class Settings(BaseSettings):
     # Power BI Configuration
     powerbi: Optional[PowerBISettings] = None
     
+    # UI Configuration Manager
+    UI_CONFIG_ENVIRONMENT: str = "prod"  # Environment for UI config (dev, staging, prod)
+    
     def __init__(self, **kwargs):
         super().__init__(**kwargs)
-        try:
-            self.copilot_studio = CopilotStudioSettings()
-            print(f"✓ Copilot Studio configured: environment_id={self.copilot_studio.environment_id}, schema_name={self.copilot_studio.schema_name}")
-        except Exception as e:
-            # Copilot Studio config is optional
-            print(f"⚠ Copilot Studio not configured: {e}")
-            pass
         
-        try:
-            self.ai_foundry = AIFoundrySettings()
-            print(f"✓ Azure AI Foundry configured: project={self.ai_foundry.project_name}, agent={self.ai_foundry.agent_id}")
-        except Exception as e:
-            # AI Foundry config is optional
-            print(f"⚠ Azure AI Foundry not configured: {e}")
-            pass
+        # Initialize UI configuration manager (stored as private to avoid Pydantic validation)
+        object.__setattr__(self, '_ui_config_manager', get_ui_config_manager(environment=self.UI_CONFIG_ENVIRONMENT))
         
-        try:
-            self.powerbi = PowerBISettings()
-            print(f"✓ Power BI configured: workspace={self.powerbi.workspace_id}, report={self.powerbi.report_id}")
-        except Exception as e:
-            # Power BI config is optional
-            print(f"⚠ Power BI not configured: {e}")
-            pass
+        # Load Copilot Studio if enabled in UI config
+        if self._ui_config_manager.should_load_service("copilot-studio"):
+            try:
+                self.copilot_studio = CopilotStudioSettings()
+                print(f"✓ Copilot Studio configured: environment_id={self.copilot_studio.environment_id}, schema_name={self.copilot_studio.schema_name}")
+            except Exception as e:
+                print(f"⚠ Copilot Studio not configured (service disabled): {e}")
+                self.copilot_studio = None
+        else:
+            print("ℹ Copilot Studio disabled by UI configuration")
+            self.copilot_studio = None
+        
+        # Load Azure AI Foundry if enabled in UI config
+        if self._ui_config_manager.should_load_service("ai-foundry"):
+            try:
+                self.ai_foundry = AIFoundrySettings()
+                print(f"✓ Azure AI Foundry configured: project={self.ai_foundry.project_name}, agent={self.ai_foundry.agent_id}")
+            except Exception as e:
+                print(f"⚠ Azure AI Foundry not configured (service disabled): {e}")
+                self.ai_foundry = None
+        else:
+            print("ℹ Azure AI Foundry disabled by UI configuration")
+            self.ai_foundry = None
+        
+        # Load Power BI if enabled in UI config
+        if self._ui_config_manager.should_load_service("powerbi"):
+            try:
+                self.powerbi = PowerBISettings()
+                print(f"✓ Power BI configured: workspace={self.powerbi.workspace_id}, report={self.powerbi.report_id}")
+            except Exception as e:
+                print(f"⚠ Power BI not configured (service disabled): {e}")
+                self.powerbi = None
+        else:
+            print("ℹ Power BI disabled by UI configuration")
+            self.powerbi = None
+    
+    @property
+    def ui_config(self):
+        """Access the UI configuration manager"""
+        return self._ui_config_manager
+
