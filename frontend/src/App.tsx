@@ -10,6 +10,7 @@ import ChatbotPage from './components/ChatbotPage';
 import AIFoundryPage from './components/AIFoundryPage';
 import SettingsPage from './components/SettingsPage';
 import PowerBIReportPage from './components/PowerBIReportPage';
+import PowerBIReportsPage from './components/PowerBIReportsPage';
 import { createAppTheme, getTenantConfig, TenantConfig, defaultTenantConfig } from './theme/theme';
 import { applyFavicon, updateDocumentTitle } from './config/tenantConfig';
 import { getUIConfig, UIConfig, shouldDisplayTab } from './services/featureConfig';
@@ -131,6 +132,20 @@ function App() {
               <ProtectedRoute>
                 <MainLayout tenantConfig={tenantConfig} uiConfig={uiConfig}>
                   <PowerBIReportPage uiConfig={uiConfig} />
+                </MainLayout>
+              </ProtectedRoute>
+            }
+          />
+        )}
+        
+        {/* Power BI Reports Route - Multiple Reports */}
+        {shouldDisplayTab(uiConfig, 'powerbi-reports') && (
+          <Route
+            path="/powerbi-reports/:reportId"
+            element={
+              <ProtectedRoute>
+                <MainLayout tenantConfig={tenantConfig} uiConfig={uiConfig}>
+                  <PowerBIReportsPage uiConfig={uiConfig} />
                 </MainLayout>
               </ProtectedRoute>
             }

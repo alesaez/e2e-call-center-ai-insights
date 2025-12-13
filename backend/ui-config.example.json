@@ -1,0 +1,154 @@
+{
+  "version": "1.0.0",
+  "defaultEnvironment": "prod",
+  "environments": {
+    "dev": {},
+    "staging": {},
+    "prod": {}
+  },
+  "tabs": [
+    {
+      "id": "dashboard",
+      "display": true,
+      "load": true,
+      "labels": {
+        "name": "Dashboard",
+        "title": "Dashboard",
+        "subtitle": "Overview of all metrics"
+      },
+      "overrides": {
+        "dev": {
+          "labels": {
+            "subtitle": "Development environment"
+          }
+        }
+      },
+      "meta": {
+        "owner": "app-shell",
+        "description": "Main dashboard view"
+      }
+    },
+    {
+      "id": "copilot-studio",
+      "display": true,
+      "load": true,
+      "labels": {
+        "name": "Copilot Studio Chat",
+        "title": "Copilot Studio",
+        "subtitle": "AI-powered customer service"
+      },
+      "overrides": {
+        "dev": {
+          "labels": {
+            "subtitle": "Testing chatbot conversations"
+          }
+        }
+      },
+      "meta": {
+        "owner": "copilot-studio",
+        "description": "Copilot Studio chatbot interface"
+      }
+    },
+    {
+      "id": "ai-foundry",
+      "display": true,
+      "load": true,
+      "labels": {
+        "name": "AI Foundry Chat",
+        "title": "Azure AI Foundry",
+        "subtitle": "Advanced AI capabilities"
+      },
+      "overrides": {
+        "dev": {
+          "labels": {
+            "subtitle": "AI experimentation environment"
+          }
+        }
+      },
+      "meta": {
+        "owner": "ai-foundry",
+        "description": "Azure AI Foundry chatbot interface"
+      }
+    },
+    {
+      "id": "powerbi",
+      "display": true,
+      "load": true,
+      "labels": {
+        "name": "Power BI Report",
+        "title": "Analytics Dashboard",
+        "subtitle": "Business intelligence insights"
+      },
+      "overrides": {
+        "staging": {
+          "display": false,
+          "load": false
+        }
+      },
+      "meta": {
+        "owner": "analytics",
+        "description": "Power BI embedded reports"
+      }
+    },
+    {
+      "id": "powerbi-reports",
+      "display": true,
+      "load": true,
+      "labels": {
+        "name": "Power BI Reports",
+        "title": "Power BI Reports",
+        "subtitle": "Multiple embedded reports"
+      },
+      "children": [
+        {
+          "id": "powerbi-report-1",
+          "reportId": "YOUR_REPORT_ID_HERE",
+          "workspaceId": "YOUR_WORKSPACE_ID_HERE",
+          "labels": {
+            "name": "Report 1",
+            "title": "Sales Analytics",
+            "subtitle": "Sales performance metrics"
+          }
+        },
+        {
+          "id": "powerbi-report-2",
+          "reportId": "YOUR_REPORT_ID_HERE",
+          "workspaceId": "YOUR_WORKSPACE_ID_HERE",
+          "labels": {
+            "name": "Report 2",
+            "title": "Customer Insights",
+            "subtitle": "Customer behavior analysis"
+          }
+        },
+        {
+          "id": "powerbi-report-3",
+          "reportId": "YOUR_REPORT_ID_HERE",
+          "workspaceId": "YOUR_WORKSPACE_ID_HERE",
+          "labels": {
+            "name": "Report 3",
+            "title": "Operational Metrics",
+            "subtitle": "Real-time operations dashboard"
+          }
+        }
+      ],
+      "meta": {
+        "owner": "analytics",
+        "description": "Collection of Power BI embedded reports"
+      }
+    },
+    {
+      "id": "settings",
+      "display": true,
+      "load": false,
+      "labels": {
+        "name": "Settings",
+        "title": "Configuration",
+        "subtitle": "Manage your preferences"
+      },
+      "meta": {
+        "owner": "app-shell",
+        "description": "Application settings"
+      }
+    }
+  ]
+}

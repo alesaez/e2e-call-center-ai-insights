@@ -83,6 +83,9 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
   const [aiFoundryConversationsError, setAiFoundryConversationsError] = useState<string | null>(null);
   const [showAllAiFoundryConversations, setShowAllAiFoundryConversations] = useState(false);
   
+  // Power BI Reports submenu state
+  const [powerbiReportsSubmenuOpen, setPowerbiReportsSubmenuOpen] = useState(false);
+  
   const navigate = useNavigate();
   const location = useLocation();
   const { accounts } = useMsal();
@@ -100,6 +103,8 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
       if (aiFoundryConversations.length === 0) {
         loadAiFoundryConversations();
       }
+    } else if (location.pathname.startsWith('/powerbi-reports/')) {
+      setPowerbiReportsSubmenuOpen(true);
     }
   }, [location.pathname]);
 
@@ -193,6 +198,10 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
     if (newOpen && aiFoundryConversations.length === 0) {
       loadAiFoundryConversations();
     }
+  };
+
+  const handlePowerbiReportsSubmenuToggle = () => {
+    setPowerbiReportsSubmenuOpen(!powerbiReportsSubmenuOpen);
   };
 
   const handleConversationSelect = (conversation: ConversationSummary) => {
@@ -340,6 +349,80 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
             </ListItemButton>
           </ListItem>
         ))}
+
+        {/* Power BI Reports with Submenu */}
+        {getTabConfig(uiConfig, 'powerbi-reports')?.display && (
+          <>
+            <ListItem disablePadding sx={{ px: 1 }}>
+              <ListItemButton
+                onClick={() => {
+                  handlePowerbiReportsSubmenuToggle();
+                }}
+                sx={{
+                  borderRadius: 1,
+                  mb: 0.5,
+                  '&.Mui-selected': {
+                    bgcolor: 'primary.main',
+                    color: 'white',
+                    '&:hover': {
+                      bgcolor: 'primary.dark',
+                    },
+                    '& .MuiListItemIcon-root': {
+                      color: 'white',
+                    },
+                  },
+                }}
+              >
+                <ListItemIcon>
+                  <BarChartIcon />
+                </ListItemIcon>
+                <ListItemText primary={getTabConfig(uiConfig, 'powerbi-reports')?.labels.name} />
+                {powerbiReportsSubmenuOpen ? <ExpandLess /> : <ExpandMore />}
+              </ListItemButton>
+            </ListItem>
+
+            {/* Power BI Reports Submenu */}
+            <Collapse in={powerbiReportsSubmenuOpen} timeout="auto" unmountOnExit>
+              <List component="div" disablePadding sx={{ pl: 1 }}>
+                {getTabConfig(uiConfig, 'powerbi-reports')?.children?.map((report) => (
+                  <ListItem key={report.id} disablePadding sx={{ px: 1 }}>
+                    <ListItemButton
+                      selected={location.pathname === `/powerbi-reports/${report.id}`}
+                      onClick={() => {
+                        navigate(`/powerbi-reports/${report.id}`);
+                        if (isMobile) setMobileOpen(false);
+                      }}
+                      sx={{
+                        borderRadius: 1,
+                        mb: 0.5,
+                        pl: 4,
+                        minHeight: 40,
+                        '&.Mui-selected': {
+                          bgcolor: 'primary.main',
+                          color: 'white',
+                          '&:hover': {
+                            bgcolor: 'primary.dark',
+                          },
+                        },
+                        '&:hover': {
+                          bgcolor: location.pathname === `/powerbi-reports/${report.id}` ? 'primary.dark' : 'grey.100',
+                        },
+                      }}
+                    >
+                      <ListItemText 
+                        primary={report.labels.name}
+                        primaryTypographyProps={{
+                          variant: 'body2',
+                          fontWeight: location.pathname === `/powerbi-reports/${report.id}` ? 600 : 400,
+                        }}
+                      />
+                    </ListItemButton>
+                  </ListItem>
+                ))}
+              </List>
+            </Collapse>
+          </>
+        )}
 
         {/* Copilot Studio Chatbot with Submenu */}
         {getTabConfig(uiConfig, 'copilot-studio')?.display && (

@@ -9,6 +9,7 @@ import {
 import { PowerBIEmbed } from 'powerbi-client-react';
 import { models } from 'powerbi-client';
 import apiClient from '../services/apiClient';
+import { UIConfig } from '../services/featureConfig';
 
 interface PowerBIEmbedConfig {
   reportId: string;
@@ -18,9 +19,11 @@ interface PowerBIEmbedConfig {
   workspaceId?: string;
 }
 
-interface PowerBIReportPageProps {}
+interface PowerBIReportPageProps {
+  uiConfig: UIConfig;
+}
 
-const PowerBIReportPage: React.FC<PowerBIReportPageProps> = () => {
+const PowerBIReportPage: React.FC<PowerBIReportPageProps> = ({ uiConfig: _uiConfig }) => {
   const [embedConfig, setEmbedConfig] = useState<PowerBIEmbedConfig | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);

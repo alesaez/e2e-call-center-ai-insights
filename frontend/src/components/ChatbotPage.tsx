@@ -1,6 +1,7 @@
 import { useEffect, useState, useRef, Component, ErrorInfo, ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useConversationContext } from '../contexts/ConversationContext';
+import { UIConfig } from '../services/featureConfig';
 import {
   Box,
   Typography,
@@ -398,7 +399,11 @@ const AdaptiveCardRenderer = ({
   );
 };
 
-export default function ChatbotPage() {
+interface ChatbotPageProps {
+  uiConfig: UIConfig;
+}
+
+export default function ChatbotPage({ uiConfig: _uiConfig }: ChatbotPageProps) {
   const theme = useTheme();
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const location = useLocation();

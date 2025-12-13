@@ -31,6 +31,7 @@ import {
   Save as SaveIcon,
 } from '@mui/icons-material';
 import apiClient from '../services/apiClient';
+import { UIConfig } from '../services/featureConfig';
 
 interface TabPanelProps {
   children?: React.ReactNode;
@@ -56,7 +57,11 @@ interface QueryTemplate {
   is_active: boolean;
 }
 
-export default function SettingsPage() {
+interface SettingsPageProps {
+  uiConfig: UIConfig;
+}
+
+export default function SettingsPage({ uiConfig: _uiConfig }: SettingsPageProps) {
   const [tabValue, setTabValue] = useState(0);
   const [templates, setTemplates] = useState<QueryTemplate[]>([]);
   const [loading, setLoading] = useState(false);

@@ -194,8 +194,9 @@ class Settings(BaseSettings):
             print("ℹ Azure AI Foundry disabled by UI configuration")
             self.ai_foundry = None
         
-        # Load Power BI if enabled in UI config
-        if self._ui_config_manager.should_load_service("powerbi"):
+        # Load Power BI if enabled in UI config (either single report or multi-report)
+        if (self._ui_config_manager.should_load_service("powerbi") or 
+            self._ui_config_manager.should_load_service("powerbi-reports")):
             try:
                 self.powerbi = PowerBISettings()
                 print(f"✓ Power BI configured: workspace={self.powerbi.workspace_id}, report={self.powerbi.report_id}")

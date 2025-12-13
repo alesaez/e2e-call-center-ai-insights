@@ -9,11 +9,19 @@ export interface TabLabels {
   subtitle?: string;
 }
 
+export interface PowerBIReportChild {
+  id: string;
+  reportId: string;
+  workspaceId: string;
+  labels: TabLabels;
+}
+
 export interface TabConfig {
   id: string;
   display: boolean;
   load: boolean;
   labels: TabLabels;
+  children?: PowerBIReportChild[];
 }
 
 export interface UIConfigResponse {
@@ -69,6 +77,17 @@ const defaultTabConfigs: TabConfig[] = [
       title: 'Analytics Dashboard',
       subtitle: 'Business intelligence insights',
     },
+  },
+  {
+    id: 'powerbi-reports',
+    display: true,
+    load: true,
+    labels: {
+      name: 'Power BI Reports',
+      title: 'Power BI Reports',
+      subtitle: 'Multiple embedded reports',
+    },
+    children: [],
   },
   {
     id: 'settings',

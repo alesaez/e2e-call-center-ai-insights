@@ -226,13 +226,20 @@ class PowerBIService:
             logger.info("Embed token generated successfully")
             return embed_token
     
-    async def get_embed_config(self, user_access_token: str) -> PowerBIEmbedConfig:
+    async def get_embed_config(
+        self, 
+        user_access_token: str,
+        report_id: Optional[str] = None,
+        workspace_id: Optional[str] = None
+    ) -> PowerBIEmbedConfig:
         """
         Get complete embed configuration including report metadata and embed token.
         Uses On-Behalf-Of flow to access Power BI with user's permissions.
         
         Args:
             user_access_token: The user's access token from the frontend
+            report_id: Optional specific report ID (overrides instance default)
+            workspace_id: Optional specific workspace ID (overrides instance default)
         
         Returns:
             PowerBIEmbedConfig object with all required embed information
@@ -240,31 +247,46 @@ class PowerBIService:
         Raises:
             Exception: If any step fails
         """
-        logger.info(f"Getting embed config for report: {self.report_id}")
+        # Use provided IDs or fall back to defaults
+        target_report_id = report_id or self.report_id
+        target_workspace_id = workspace_id or self.workspace_id
+        
+        logger.info(f"Getting embed config for report: {target_report_id}")
         
         # Get Power BI access token via OBO flow
         powerbi_access_token = await self._get_access_token(user_access_token)
         
         # Fetch report metadata (includes embedUrl and datasetId)
-        report_metadata = await self.get_report_metadata(powerbi_access_token)
-        embed_url = report_metadata.get("embedUrl")
+        # Temporarily override instance variables for metadata fetch
+        original_report_id = self.report_id
+        original_workspace_id = self.workspace_id
         
-        if not embed_url:
-            raise Exception("Embed URL not found in report metadata")
-        
-        # Generate embed token (requires dataset ID from metadata)
-        embed_token = await self.generate_embed_token(powerbi_access_token, report_metadata)
-        token_expiration = datetime.utcnow() + timedelta(minutes=60)
-        
-        # Create embed config object
-        config = PowerBIEmbedConfig(
-            report_id=self.report_id,
-            embed_url=embed_url,
-            embed_token=embed_token,
-            token_expiration=token_expiration,
-            workspace_id=self.workspace_id
-        )
-        
-        logger.info("Embed config created successfully")
-        return config
-        return config
+        try:
+            self.report_id = target_report_id
+            self.workspace_id = target_workspace_id
+            
+            report_metadata = await self.get_report_metadata(powerbi_access_token)
+            embed_url = report_metadata.get("embedUrl")
+            
+            if not embed_url:
+                raise Exception("Embed URL not found in report metadata")
+            
+            # Generate embed token (requires dataset ID from metadata)
+            embed_token = await self.generate_embed_token(powerbi_access_token, report_metadata)
+            token_expiration = datetime.utcnow() + timedelta(minutes=60)
+            
+            # Create embed config object
+            config = PowerBIEmbedConfig(
+                report_id=target_report_id,
+                embed_url=embed_url,
+                embed_token=embed_token,
+                token_expiration=token_expiration,
+                workspace_id=target_workspace_id
+            )
+            
+            logger.info("Embed config created successfully")
+            return config
+        finally:
+            # Restore original values
+            self.report_id = original_report_id
+            self.workspace_id = original_workspace_id

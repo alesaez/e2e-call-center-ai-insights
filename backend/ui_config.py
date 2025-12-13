@@ -17,6 +17,14 @@ class TabLabels(BaseModel):
     subtitle: Optional[str] = None
 
 
+class PowerBIReportChild(BaseModel):
+    """Configuration for a child Power BI report"""
+    id: str
+    reportId: str
+    workspaceId: str
+    labels: TabLabels
+
+
 class TabOverride(BaseModel):
     """Environment-specific tab overrides"""
     display: Optional[bool] = None
@@ -36,6 +44,7 @@ class TabConfig(BaseModel):
     display: bool = True
     load: bool = True
     labels: TabLabels
+    children: Optional[List[PowerBIReportChild]] = None
     overrides: Optional[Dict[str, TabOverride]] = None
     meta: Optional[TabMeta] = None
 
@@ -209,7 +218,7 @@ class UIConfigManager:
         """
         tabs_data = []
         for tab in self.get_all_tabs():
-            tabs_data.append({
+            tab_dict = {
                 "id": tab.id,
                 "display": tab.display,
                 "load": tab.load,
@@ -218,7 +227,25 @@ class UIConfigManager:
                     "title": tab.labels.title,
                     "subtitle": tab.labels.subtitle
                 }
-            })
+            }
+            
+            # Include children if present (for Power BI Reports)
+            if tab.children:
+                tab_dict["children"] = [
+                    {
+                        "id": child.id,
+                        "reportId": child.reportId,
+                        "workspaceId": child.workspaceId,
+                        "labels": {
+                            "name": child.labels.name,
+                            "title": child.labels.title,
+                            "subtitle": child.labels.subtitle
+                        }
+                    }
+                    for child in tab.children
+                ]
+            
+            tabs_data.append(tab_dict)
         
         return {
             "version": self._raw_config.version if self._raw_config else "1.0.0",

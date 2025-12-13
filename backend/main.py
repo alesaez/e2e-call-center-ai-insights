@@ -301,6 +301,7 @@ async def get_feature_config():
         "copilot-studio": "copilotStudio",
         "ai-foundry": "aiFoundry",
         "powerbi": "powerbi",
+        "powerbi-reports": "powerbiReports",
         "settings": "settings"
     }
     
@@ -395,11 +396,17 @@ async def get_dashboard_charts(token_payload: Dict = Depends(verify_token)):
 @app.get("/api/powerbi/embed-config")
 async def get_powerbi_embed_config(
     request: Request,
-    token_payload: Dict = Depends(verify_token)
+    token_payload: Dict = Depends(verify_token),
+    reportId: Optional[str] = None,
+    workspaceId: Optional[str] = None
 ):
     """
     Get Power BI embed configuration including report ID, embed URL, and embed token.
     Uses On-Behalf-Of (OBO) flow to access Power BI with user's permissions.
+    
+    Args:
+        reportId: Optional specific report ID (overrides default from settings)
+        workspaceId: Optional specific workspace ID (overrides default from settings)
     
     Returns:
         Dictionary containing:
@@ -432,7 +439,12 @@ async def get_powerbi_embed_config(
         logger.info(f"Generating Power BI embed config for user: {token_payload.get('preferred_username', 'unknown')}")
         
         # Get complete embed configuration using OBO flow
-        embed_config = await powerbi_service.get_embed_config(user_access_token)
+        # Use provided reportId and workspaceId if available, otherwise use defaults
+        embed_config = await powerbi_service.get_embed_config(
+            user_access_token,
+            report_id=reportId,
+            workspace_id=workspaceId
+        )
         
         logger.info("Power BI embed config generated successfully")
         return embed_config.to_dict()
