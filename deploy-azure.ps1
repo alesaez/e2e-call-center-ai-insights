@@ -1389,6 +1389,16 @@ if (-not $InfraOnly) {
     Write-Host "Building and pushing frontend image..." -ForegroundColor Green
     Push-Location frontend
 
+    $defaultEnvDomain = az containerapp env show `
+        --resource-group $ResourceGroup `
+        --name $EnvironmentName `
+        --query "properties.defaultDomain" `
+        --output tsv
+        
+    $backendUrl = "https://$BackendAppName.$defaultEnvDomain"
+
+    $frontendUrl = "https://$FrontendAppName.$defaultEnvDomain"
+
     az acr build `
         --registry $ContainerRegistry `
         --image demoai-frontend:latest `

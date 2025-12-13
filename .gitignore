@@ -11,6 +11,9 @@ __pycache__/
 .env.local
 .env.*.local
 
+# UI Configuration (may contain environment-specific settings)
+backend/ui-config.json
+
 # Deployment configuration (contains sensitive values)
 deploy-config.ps1
 
@@ -41,3 +44,4 @@ htmlcov/
 
 # Docker
 .dockerignore
+backend/ui-config.json

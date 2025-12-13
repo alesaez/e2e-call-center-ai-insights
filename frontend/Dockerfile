@@ -1,5 +1,5 @@
-# Build stage
-FROM node:18-alpine as build
+# Build stage - Using Node 22 Debian (better ACR compatibility than Alpine)
+FROM node:22 as build
 
 WORKDIR /app
 
@@ -40,7 +40,7 @@ RUN npm ci
 # Copy source code
 COPY . .
 
-# Build the application (Vite will embed the environment variables)
+# Build the application
 RUN npm run build
 
 # Production stage
