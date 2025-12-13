@@ -33,3 +33,7 @@ microsoft-agents-hosting-core==0.6.1
 # Additional dependencies for chat history and async operations
 typing-extensions>=4.0.0
 asyncio
+# Visualization dependencies for chart/plot generation
+matplotlib==3.9.3
+numpy==2.2.1
+pandas==2.2.3

@@ -1,9 +1,10 @@
-# Build stage - Using Node 22 Debian (better ACR compatibility than Alpine)
-FROM node:22 as build
+
+# ---------- BUILD STAGE (Debian-based Node) ----------
+FROM node:22 AS build
 
 WORKDIR /app
 
-# Accept build arguments for Entra ID configuration
+# 1) Build-time configuration for Vite
 ARG VITE_ENTRA_CLIENT_ID
 ARG VITE_ENTRA_TENANT_ID
 ARG VITE_API_SCOPE
@@ -17,7 +18,7 @@ ARG VITE_TENANT_FAVICON_URL
 ARG VITE_TENANT_PRIMARY_COLOR
 ARG VITE_TENANT_SECONDARY_COLOR
 
-# Set environment variables from build args (Vite reads VITE_* env vars at build time)
+# Vite reads VITE_* envs at build time
 ENV VITE_ENTRA_CLIENT_ID=$VITE_ENTRA_CLIENT_ID \
     VITE_ENTRA_TENANT_ID=$VITE_ENTRA_TENANT_ID \
     VITE_API_SCOPE=$VITE_API_SCOPE \
@@ -31,29 +32,51 @@ ENV VITE_ENTRA_CLIENT_ID=$VITE_ENTRA_CLIENT_ID \
     VITE_TENANT_PRIMARY_COLOR=$VITE_TENANT_PRIMARY_COLOR \
     VITE_TENANT_SECONDARY_COLOR=$VITE_TENANT_SECONDARY_COLOR
 
-# Copy package files
+# 2) Copy only manifest files first (best layer caching)
 COPY package*.json ./
 
-# Install dependencies
+# 3) Install clean, reproducible dependencies
+#    - Ensure devDependencies are present (TypeScript/Vite usually live there)
 RUN npm ci
 
-# Copy source code
+# 4) Copy the full source AFTER deps
 COPY . .
 
-# Build the application
+# 5) Normalize line endings & ensure executables:
+#    - CRLF in node_modules/.bin scripts breaks shebang on Linux (causes exit 126)
+#    - Missing +x on scripts also causes exit 126
+#    dos2unix is in Debian repos; if it’s missing, the command still succeeds (|| true)
+RUN apt-get update && apt-get install -y --no-install-recommends dos2unix && rm -rf /var/lib/apt/lists/* || true
+RUN find node_modules/.bin -type f -exec chmod +x {} \; || true
+RUN find node_modules/.bin -type f -exec dos2unix {} \; || true
+
+# 6) Add quick diagnostics (kept as separate RUN so you can read logs in ACR)
+RUN node -v && npm -v
+RUN which tsc || true
+RUN ls -l node_modules/.bin/tsc || true
+RUN head -n 1 node_modules/.bin/tsc || true
+RUN printf "PATH is: %s\n" "$PATH"
+
+# 7) Prefer running TypeScript via npx (robust PATH resolution)
+#    If your "build" script already calls vite/tsc, keep npm run build.
+#    Otherwise, explicitly build with npx to avoid PATH quirks.
+#    (Uncomment the line that matches your project.)
+# RUN npx tsc -p tsconfig.json
 RUN npm run build
 
-# Production stage
-FROM nginx:alpine
+# ---------- RUNTIME STAGE (Nginx for static assets) ----------
+FROM nginx:alpine AS runtime
 
-# Copy built files from build stage
+# Copy the built site
 COPY --from=build /app/dist /usr/share/nginx/html
 
-# Copy nginx configuration
+# Copy nginx configuration (ensure it has LF line-endings)
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 
-# Expose port 80
+# Security/operability niceties
 EXPOSE 80
 
-# Start nginx
-CMD ["nginx", "-g", "daemon off;"]
+# Optional: healthcheck (customize path if you have a health page)
+# HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+#   CMD wget -qO- http://127.0.0.1/health || exit 1
+

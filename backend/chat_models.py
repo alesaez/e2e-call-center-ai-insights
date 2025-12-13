@@ -23,13 +23,18 @@ class AttachmentKind(str, Enum):
     FILE = "file"
     IMAGE = "image"
     DOCUMENT = "document"
+    ANNOTATION = "annotation"  # For citations/references
+    VISUALIZATION = "visualization"  # For generated charts/plots
 
 class MessageAttachment(BaseModel):
     """Message attachment model."""
-    kind: AttachmentKind
-    uri: str
+    kind: Optional[AttachmentKind] = None  # Made optional for backward compatibility
+    uri: Optional[str] = None  # Optional for base64 images
     mime: Optional[str] = None
     title: Optional[str] = None
+    contentType: Optional[str] = None  # MIME type for attachments (e.g., "image/png", "application/vnd.microsoft.card.adaptive")
+    content: Optional[Any] = None  # For base64 images or adaptive card content
+    name: Optional[str] = None  # File name
 
 class MessageGrounding(BaseModel):
     """Message grounding information for AI responses."""

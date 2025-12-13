@@ -30,13 +30,14 @@ class TokenCredential:
 class AIFoundryService:
     """Service for interacting with Azure AI Foundry agents."""
     
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, visualization_service=None):
         """Initialize the Azure AI Foundry service with MSAL OBO authentication."""
         if not settings.ai_foundry:
             raise ValueError("Azure AI Foundry settings not configured")
         
         self.settings = settings
         self.ai_foundry_settings = settings.ai_foundry
+        self.visualization_service = visualization_service
         
         # Initialize MSAL Confidential Client Application for OBO flow
         self.msal_app = msal.ConfidentialClientApplication(
@@ -238,6 +239,10 @@ class AIFoundryService:
             # If no response was collected, use a default message
             if not response_text:
                 response_text = "I received your message."
+            
+            # Process response for visualizations if visualization service is available
+            if self.visualization_service and response_text:
+                response_text = self.visualization_service.process_message_for_visualizations(response_text)
             
             return {
                 "success": True,

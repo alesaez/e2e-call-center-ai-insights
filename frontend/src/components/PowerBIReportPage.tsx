@@ -9,7 +9,7 @@ import {
 import { PowerBIEmbed } from 'powerbi-client-react';
 import { models } from 'powerbi-client';
 import apiClient from '../services/apiClient';
-import { UIConfig } from '../services/featureConfig';
+import { UIConfig, getTabConfig } from '../services/featureConfig';
 
 interface PowerBIEmbedConfig {
   reportId: string;
@@ -23,10 +23,13 @@ interface PowerBIReportPageProps {
   uiConfig: UIConfig;
 }
 
-const PowerBIReportPage: React.FC<PowerBIReportPageProps> = ({ uiConfig: _uiConfig }) => {
+const PowerBIReportPage: React.FC<PowerBIReportPageProps> = ({ uiConfig }) => {
   const [embedConfig, setEmbedConfig] = useState<PowerBIEmbedConfig | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Get tab configuration
+  const powerbiTab = getTabConfig(uiConfig, 'powerbi');
 
   // Fetch embed configuration from backend
   const fetchEmbedConfig = async () => {
@@ -91,9 +94,16 @@ const PowerBIReportPage: React.FC<PowerBIReportPageProps> = ({ uiConfig: _uiConf
   return (
     <Box sx={{ height: 'calc(100vh - 64px)', display: 'flex', flexDirection: 'column' }}>
       <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-        <Typography variant="h5">
-          Power BI Report
-        </Typography>
+        <Box>
+          <Typography variant="h5">
+            {powerbiTab?.labels.title || 'Power BI Report'}
+          </Typography>
+          {powerbiTab?.labels.subtitle && (
+            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
+              {powerbiTab.labels.subtitle}
+            </Typography>
+          )}
+        </Box>
         <Button
           variant="outlined"
           color="secondary"

@@ -38,6 +38,7 @@ from copilot_studio_service import CopilotStudioService
 from ai_foundry_service import AIFoundryService
 from conversation_service import ConversationService
 from powerbi_service import PowerBIService
+from visualization_service import visualization_service
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -86,8 +87,8 @@ async def startup_event():
     # Initialize Copilot Studio service if configured
     if settings.copilot_studio:
         try:
-            copilot_studio_service = CopilotStudioService(settings)
-            logger.info("✓ Copilot Studio service initialized")
+            copilot_studio_service = CopilotStudioService(settings, visualization_service)
+            logger.info("✓ Copilot Studio service initialized with visualization support")
         except Exception as e:
             logger.error(f"Failed to initialize Copilot Studio service: {e}")
             copilot_studio_service = None
@@ -95,8 +96,8 @@ async def startup_event():
     # Initialize Azure AI Foundry service if configured
     if settings.ai_foundry:
         try:
-            ai_foundry_service = AIFoundryService(settings)
-            logger.info("✓ Azure AI Foundry service initialized")
+            ai_foundry_service = AIFoundryService(settings, visualization_service)
+            logger.info("✓ Azure AI Foundry service initialized with visualization support")
         except Exception as e:
             logger.error(f"Failed to initialize Azure AI Foundry service: {e}")
             ai_foundry_service = None
@@ -284,6 +285,20 @@ async def get_ui_config():
     Returns tab configuration with environment-specific overrides applied.
     """
     return settings.ui_config.get_api_response()
+
+
+@app.get("/api/config/visualization-instructions")
+async def get_visualization_instructions():
+    """
+    Public endpoint to get agent instructions for generating visualizations.
+    Returns markdown-formatted instructions for agents.
+    """
+    from visualization_service import VisualizationService
+    return {
+        "instructions": VisualizationService.get_agent_instructions(),
+        "enabled": True,
+        "supported_libraries": ["matplotlib", "numpy", "pandas"]
+    }
 
 
 # Legacy endpoint for backwards compatibility
@@ -656,6 +671,12 @@ async def send_message_to_ai_foundry(
             user_token=user_token,
             user_id=user_id
         )
+        
+        # Log response structure for debugging
+        logger.info(f"📤 API Response: success={response.get('success')}, text_length={len(response.get('text', ''))}, attachments_count={len(response.get('attachments', []))}")
+        if response.get('attachments'):
+            for idx, att in enumerate(response.get('attachments', [])):
+                logger.info(f"  📎 Attachment {idx}: contentType={att.get('contentType')}, has_content={bool(att.get('content'))}, name={att.get('name')}")
         
         return response
         

@@ -106,9 +106,20 @@ interface MessageAttachment {
 const MarkdownMessage = ({ text, isUser }: { text: string; isUser: boolean }) => {
   const theme = useTheme();
   
+  // Allow data URIs for inline visualization images
+  const urlTransform = (url: string) => {
+    // Allow data URIs (for inline visualizations)
+    if (url.startsWith('data:image/')) {
+      return url;
+    }
+    // For other URLs, return as-is (could add validation here)
+    return url;
+  };
+  
   return (
     <ReactMarkdown
       remarkPlugins={[remarkGfm]}
+      urlTransform={urlTransform}
       components={{
         // Custom link styling - small clickable bubbles
         a: ({ ...props }) => (
@@ -263,6 +274,30 @@ const MarkdownMessage = ({ text, isUser }: { text: string; isUser: boolean }) =>
             {props.children}
           </Box>
         ),
+        // Custom image rendering for data URIs (visualizations)
+        img: ({ ...props }) => {
+          return (
+            <Box
+              sx={{
+                display: 'block',
+                mt: 2,
+                mb: 2,
+                maxWidth: '100%',
+              }}
+            >
+              <img
+                src={props.src}
+                alt={props.alt || 'Visualization'}
+                style={{
+                  maxWidth: '100%',
+                  height: 'auto',
+                  borderRadius: '8px',
+                  boxShadow: '0 2px 8px rgba(0,0,0,0.1)',
+                }}
+              />
+            </Box>
+          );
+        },
       }}
     >
       {text}
@@ -790,30 +825,42 @@ export default function ChatbotPage({ uiConfig: _uiConfig }: ChatbotPageProps) {
 
   // Robust message saving with retry logic
   const saveMessageWithRetry = async (conversationId: string, message: Message, maxRetries = 3) => {
+    // Prepare payload outside try block for error logging
+    const transformedAttachments = (message.attachments || []).map(attachment => {
+      // For annotation attachments, keep structure as-is (already has content object)
+      if (attachment.contentType === 'annotation') {
+        return {
+          kind: 'annotation',
+          contentType: attachment.contentType,
+          content: attachment.content,
+          name: attachment.name
+        };
+      }
+      
+      // For adaptive cards and other attachments, use the legacy format
+      return {
+        kind: attachment.contentType?.includes('card') ? 'document' : 'file',
+        uri: `data:${attachment.contentType};base64,${btoa(JSON.stringify(attachment.content || {}))}`,
+        mime: attachment.contentType,
+        title: attachment.name
+      };
+    });
+
+    const payload = {
+      id: message.id,
+      text: message.text,
+      content: message.text,
+      sender: message.sender,
+      role: message.sender === 'user' ? 'user' : 'assistant',
+      timestamp: message.timestamp.toISOString(),
+      createdAt: message.timestamp.toISOString(),
+      sessionId: conversationId,
+      type: "message",
+      attachments: transformedAttachments
+    };
+    
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        // Transform attachments to match backend MessageAttachment model
-        const transformedAttachments = (message.attachments || []).map(attachment => ({
-          kind: attachment.contentType?.includes('card') ? 'document' : 'file',
-          uri: `data:${attachment.contentType};base64,${btoa(JSON.stringify(attachment.content || {}))}`,
-          mime: attachment.contentType,
-          title: attachment.name
-        }));
-
-        // Send in the format expected by the backend ChatMessage model
-        const payload = {
-          id: message.id,
-          text: message.text,           // Legacy field
-          content: message.text,        // New field
-          sender: message.sender,       // Legacy field
-          role: message.sender === 'user' ? 'user' : 'assistant', // New field
-          timestamp: message.timestamp.toISOString(), // Legacy field
-          createdAt: message.timestamp.toISOString(), // New field
-          sessionId: conversationId,    // New field (required for new schema)
-          type: "message",              // New field
-          attachments: transformedAttachments // Transform attachments for backend
-        };
-        
         const response = await apiClient.post(`/api/chat/conversations/${conversationId}/messages`, payload);
         console.log(`Message saved successfully. Status: ${response.status}`);
         return true;
@@ -822,7 +869,9 @@ export default function ChatbotPage({ uiConfig: _uiConfig }: ChatbotPageProps) {
           status: error.response?.status,
           statusText: error.response?.statusText,
           data: error.response?.data,
-          message: error.message
+          detail: error.response?.data?.detail,  // Pydantic validation errors
+          message: error.message,
+          payload: payload  // Log the payload that failed
         });
         
         if (attempt === maxRetries) {
@@ -1157,6 +1206,7 @@ export default function ChatbotPage({ uiConfig: _uiConfig }: ChatbotPageProps) {
                           
                           {/* Render Adaptive Cards if available */}
                           {message.attachments?.map((attachment, index) => {
+                            // Render Adaptive Cards
                             if (attachment.contentType === 'application/vnd.microsoft.card.adaptive') {
                               return (
                                 <Box key={index} sx={{ mt: message.text ? 1 : 0 }}>
@@ -1167,6 +1217,7 @@ export default function ChatbotPage({ uiConfig: _uiConfig }: ChatbotPageProps) {
                                 </Box>
                               );
                             }
+                            
                             return null;
                           })}
                         </Box>

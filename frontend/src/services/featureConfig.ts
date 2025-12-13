@@ -101,8 +101,49 @@ const defaultTabConfigs: TabConfig[] = [
   },
 ];
 
-// Cache for UI configuration
+// Cache key for session storage
+const CACHE_KEY = 'ui_config_cache';
+
+// In-memory cache for UI configuration
 let cachedConfig: UIConfig | null = null;
+
+/**
+ * Get cached config from session storage
+ */
+function getCachedConfigFromStorage(): UIConfig | null {
+  try {
+    const cached = sessionStorage.getItem(CACHE_KEY);
+    if (cached) {
+      const parsed = JSON.parse(cached);
+      // Reconstruct the Map from the array
+      return {
+        version: parsed.version,
+        environment: parsed.environment,
+        tabs: tabsToMap(parsed.tabs),
+      };
+    }
+  } catch (error) {
+    console.warn('Failed to parse cached UI config:', error);
+  }
+  return null;
+}
+
+/**
+ * Save config to session storage
+ */
+function saveCachedConfigToStorage(config: UIConfig): void {
+  try {
+    // Convert Map to array for JSON serialization
+    const serializable = {
+      version: config.version,
+      environment: config.environment,
+      tabs: Array.from(config.tabs.values()),
+    };
+    sessionStorage.setItem(CACHE_KEY, JSON.stringify(serializable));
+  } catch (error) {
+    console.warn('Failed to cache UI config:', error);
+  }
+}
 
 /**
  * Convert tab array to Map for easy lookup
@@ -117,8 +158,15 @@ function tabsToMap(tabs: TabConfig[]): Map<string, TabConfig> {
  * Fetch UI configuration from backend
  */
 export async function getUIConfig(): Promise<UIConfig> {
-  // Return cached config if available
+  // Return in-memory cached config if available
   if (cachedConfig) {
+    return cachedConfig;
+  }
+
+  // Try to get from session storage
+  const storedConfig = getCachedConfigFromStorage();
+  if (storedConfig) {
+    cachedConfig = storedConfig;
     return cachedConfig;
   }
 
@@ -133,6 +181,7 @@ export async function getUIConfig(): Promise<UIConfig> {
         environment: 'prod',
         tabs: tabsToMap(defaultTabConfigs),
       };
+      saveCachedConfigToStorage(cachedConfig);
       return cachedConfig;
     }
 
@@ -142,6 +191,7 @@ export async function getUIConfig(): Promise<UIConfig> {
       environment: data.environment,
       tabs: tabsToMap(data.tabs),
     };
+    saveCachedConfigToStorage(cachedConfig);
     return cachedConfig;
   } catch (error) {
     console.error('Error fetching UI config:', error);
@@ -150,6 +200,7 @@ export async function getUIConfig(): Promise<UIConfig> {
       environment: 'prod',
       tabs: tabsToMap(defaultTabConfigs),
     };
+    saveCachedConfigToStorage(cachedConfig);
     return cachedConfig;
   }
 }

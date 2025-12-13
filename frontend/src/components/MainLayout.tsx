@@ -716,7 +716,7 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
                   <AddIcon fontSize="small" color="primary" />
                 </ListItemIcon>
                 <ListItemText 
-                  primary="New AI Foundry Chat" 
+                  primary="New Chat" 
                   primaryTypographyProps={{
                     variant: 'body2',
                     fontWeight: 500,

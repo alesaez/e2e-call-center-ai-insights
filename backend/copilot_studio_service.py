@@ -15,13 +15,14 @@ logger = logging.getLogger(__name__)
 class CopilotStudioService:
     """Service for interacting with Copilot Studio agents."""
     
-    def __init__(self, settings: Settings):
+    def __init__(self, settings: Settings, visualization_service=None):
         """Initialize the Copilot Studio service."""
         if not settings.copilot_studio:
             raise ValueError("Copilot Studio settings not configured")
         
         self.settings = settings
         self.copilot_settings = settings.copilot_studio
+        self.visualization_service = visualization_service
         logger.info(f"✓ Copilot Studio service initialized: environment_id={self.copilot_settings.environment_id}")
     
     def _create_connection_settings(self) -> ConnectionSettings:
@@ -200,6 +201,10 @@ class CopilotStudioService:
             if not response_text and not attachments:
                 response_text = "I received your message."
             
+            # Process response for visualizations if visualization service is available
+            if self.visualization_service and response_text:
+                response_text = self.visualization_service.process_message_for_visualizations(response_text)
+            
             return {
                 "success": True,
                 "response": response_text,
@@ -287,6 +292,10 @@ class CopilotStudioService:
             
             if not response_text and not attachments:
                 response_text = f"Card action '{action_data.get('action')}' processed."
+            
+            # Process response for visualizations if visualization service is available
+            if self.visualization_service and response_text:
+                response_text = self.visualization_service.process_message_for_visualizations(response_text)
             
             return {
                 "success": True,
