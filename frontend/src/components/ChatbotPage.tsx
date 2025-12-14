@@ -1,7 +1,7 @@
 import { useEffect, useState, useRef, Component, ErrorInfo, ReactNode } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { useConversationContext } from '../contexts/ConversationContext';
-import { UIConfig } from '../services/featureConfig';
+import { UIConfig, getTabConfig } from '../services/featureConfig';
 import {
   Box,
   Typography,
@@ -34,8 +34,6 @@ import remarkGfm from 'remark-gfm';
 import apiClient from '../services/apiClient';
 import QuestionCards from './QuestionCards';
 import ReferenceProcessor from './ReferenceProcessor';
-
-import { predefinedQuestions } from '../config/chatQuestions';
 
 // Error Boundary Component
 interface ErrorBoundaryState {
@@ -446,6 +444,8 @@ export default function ChatbotPage({ uiConfig: _uiConfig }: ChatbotPageProps) {
   const { refreshConversations, setCurrentConversationId: setContextConversationId } = useConversationContext();
   const forceNewConversationRef = useRef<boolean>(false); // Track if we should force a new conversation
   const processedNewConversationRef = useRef<boolean>(false); // Track if we've processed a new conversation request
+  const copilotStudioTab = getTabConfig(_uiConfig, 'copilot-studio');
+  const predefinedQuestions = copilotStudioTab?.predefinedQuestions || [];
   const [session, setSession] = useState<CopilotStudioSession | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');

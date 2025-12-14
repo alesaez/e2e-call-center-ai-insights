@@ -38,6 +38,15 @@ class TabMeta(BaseModel):
     description: str
 
 
+class PredefinedQuestion(BaseModel):
+    """Configuration for a predefined chat question"""
+    id: str
+    title: str
+    question: str
+    category: str
+    icon: Optional[str] = None
+
+
 class TabConfig(BaseModel):
     """Configuration for a single tab"""
     id: str
@@ -45,6 +54,7 @@ class TabConfig(BaseModel):
     load: bool = True
     labels: TabLabels
     children: Optional[List[PowerBIReportChild]] = None
+    predefinedQuestions: Optional[List[PredefinedQuestion]] = None
     overrides: Optional[Dict[str, TabOverride]] = None
     meta: Optional[TabMeta] = None
 
@@ -243,6 +253,19 @@ class UIConfigManager:
                         }
                     }
                     for child in tab.children
+                ]
+            
+            # Include predefined questions if present (for chat tabs)
+            if tab.predefinedQuestions:
+                tab_dict["predefinedQuestions"] = [
+                    {
+                        "id": question.id,
+                        "title": question.title,
+                        "question": question.question,
+                        "category": question.category,
+                        "icon": question.icon
+                    }
+                    for question in tab.predefinedQuestions
                 ]
             
             tabs_data.append(tab_dict)

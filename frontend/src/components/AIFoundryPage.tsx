@@ -35,8 +35,6 @@ import QuestionCards from './QuestionCards';
 import ReferenceProcessor from './ReferenceProcessor';
 import { UIConfig, getTabConfig } from '../services/featureConfig';
 
-import { predefinedQuestions } from '../config/chatQuestions';
-
 // Error Boundary Component
 interface ErrorBoundaryState {
   hasError: boolean;
@@ -1044,6 +1042,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
 
 
   const aiFoundryTab = getTabConfig(uiConfig, 'ai-foundry');
+  const predefinedQuestions = aiFoundryTab?.predefinedQuestions || [];
 
 
   return (

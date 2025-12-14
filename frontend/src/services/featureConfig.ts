@@ -9,6 +9,14 @@ export interface TabLabels {
   subtitle?: string;
 }
 
+export interface PredefinedQuestion {
+  id: string;
+  title: string;
+  question: string;
+  category: string;
+  icon?: string;
+}
+
 export interface PowerBIReportChild {
   id: string;
   reportId: string;
@@ -22,6 +30,7 @@ export interface TabConfig {
   load: boolean;
   labels: TabLabels;
   children?: PowerBIReportChild[];
+  predefinedQuestions?: PredefinedQuestion[];
 }
 
 export interface UIConfigResponse {
@@ -103,6 +112,7 @@ const defaultTabConfigs: TabConfig[] = [
 
 // Cache key for session storage
 const CACHE_KEY = 'ui_config_cache';
+const VERSION_VALIDATED_KEY = 'ui_config_version_validated';
 
 // In-memory cache for UI configuration
 let cachedConfig: UIConfig | null = null;
@@ -155,18 +165,54 @@ function tabsToMap(tabs: TabConfig[]): Map<string, TabConfig> {
 }
 
 /**
+ * Validate cached version against backend version
+ * If versions differ, clear cache and reload
+ * Only validates once per session to avoid infinite loops
+ */
+async function validateCacheVersion(cachedVersion: string): Promise<void> {
+  // Check if we've already validated this session
+  const validatedVersion = sessionStorage.getItem(VERSION_VALIDATED_KEY);
+  if (validatedVersion === cachedVersion) {
+    return; // Already validated, skip
+  }
+
+  try {
+    const response = await fetch('/api/config/ui');
+    const data = await response.json();
+    if (data.version !== cachedVersion) {
+      console.log(`UI config version changed: ${cachedVersion} → ${data.version}. Reloading...`);
+      sessionStorage.removeItem(VERSION_VALIDATED_KEY);
+      clearUIConfigCache();
+      // Force page reload to get fresh config
+      window.location.reload();
+    } else {
+      // Mark this version as validated for this session
+      sessionStorage.setItem(VERSION_VALIDATED_KEY, cachedVersion);
+    }
+  } catch (error) {
+    console.warn('Failed to validate cache version:', error);
+  }
+}
+
+/**
  * Fetch UI configuration from backend
  */
 export async function getUIConfig(): Promise<UIConfig> {
-  // Return in-memory cached config if available
-  if (cachedConfig) {
+  // Try to get from session storage first
+  const storedConfig = getCachedConfigFromStorage();
+  if (storedConfig) {
+    // Validate cache by checking version with backend in background
+    validateCacheVersion(storedConfig.version);
+    
+    // Return cached config (if version changed, page will reload)
+    if (!cachedConfig) {
+      cachedConfig = storedConfig;
+    }
     return cachedConfig;
   }
 
-  // Try to get from session storage
-  const storedConfig = getCachedConfigFromStorage();
-  if (storedConfig) {
-    cachedConfig = storedConfig;
+  // Return in-memory cached config if available
+  if (cachedConfig) {
     return cachedConfig;
   }
 
@@ -232,4 +278,6 @@ export function shouldDisplayTab(uiConfig: UIConfig, tabId: string): boolean {
  */
 export function clearUIConfigCache(): void {
   cachedConfig = null;
+  sessionStorage.removeItem(CACHE_KEY);
+  sessionStorage.removeItem(VERSION_VALIDATED_KEY);
 }

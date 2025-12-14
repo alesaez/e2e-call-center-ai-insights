@@ -37,6 +37,36 @@
         "title": "Copilot Studio",
         "subtitle": "AI-powered customer service"
       },
+      "predefinedQuestions": [
+        {
+          "id": "copilot-studio-intro",
+          "title": "Copilot Studio",
+          "question": "What is Copilot Studio?",
+          "category": "Getting Started",
+          "icon": "🤖"
+        },
+        {
+          "id": "copilot-studio-help",
+          "title": "Learn Copilot Studio",
+          "question": "Help me create a Copilot Studio Agent",
+          "category": "Getting Started",
+          "icon": "🎓"
+        },
+        {
+          "id": "example-question-1",
+          "title": "Example Question",
+          "question": "Tell me about your services",
+          "category": "General",
+          "icon": "💬"
+        },
+        {
+          "id": "example-question-2",
+          "title": "Another Example",
+          "question": "How can I get help?",
+          "category": "Support",
+          "icon": "❓"
+        }
+      ],
       "overrides": {
         "dev": {
           "labels": {
@@ -58,6 +88,36 @@
         "title": "Azure AI Foundry",
         "subtitle": "Advanced AI capabilities"
       },
+      "predefinedQuestions": [
+        {
+          "id": "ai-foundry-intro",
+          "title": "AI Foundry",
+          "question": "What is Azure AI Foundry?",
+          "category": "Getting Started",
+          "icon": "🤖"
+        },
+        {
+          "id": "ai-foundry-help",
+          "title": "Learn AI Foundry",
+          "question": "Help me build an AI application",
+          "category": "Getting Started",
+          "icon": "🎓"
+        },
+        {
+          "id": "example-question-3",
+          "title": "Example Query",
+          "question": "What can AI Foundry do?",
+          "category": "Features",
+          "icon": "✨"
+        },
+        {
+          "id": "example-question-4",
+          "title": "Support Query",
+          "question": "How do I get started?",
+          "category": "Support",
+          "icon": "🚀"
+        }
+      ],
       "overrides": {
         "dev": {
           "labels": {

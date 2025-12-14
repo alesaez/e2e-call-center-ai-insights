@@ -8,7 +8,7 @@ import {
   Chip,
 } from '@mui/material';
 import { useTheme } from '@mui/material/styles';
-import { PredefinedQuestion } from '../config/chatQuestions';
+import { PredefinedQuestion } from '../services/featureConfig';
 
 interface QuestionCardsProps {
   questions: PredefinedQuestion[];
