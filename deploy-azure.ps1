@@ -1025,6 +1025,10 @@ if (-not $InfraOnly) {
     Write-Host "=== Deploying Application Code ===" -ForegroundColor Cyan
     Write-Host ""
     
+    # Generate version tag from UTC timestamp
+    $imageVersion = (Get-Date).ToUniversalTime().ToString("yyyy.MM.dd.HHmm")
+    Write-Host "Image Version: $imageVersion (UTC)" -ForegroundColor Cyan
+    
     # If running in CodeOnly mode, retrieve infrastructure values
     if ($CodeOnly) {
         Write-Host "Retrieving infrastructure configuration..." -ForegroundColor Green
@@ -1059,10 +1063,12 @@ if (-not $InfraOnly) {
     Push-Location backend
     az acr build `
         --registry $ContainerRegistry `
-        --image demoai-backend:latest `
+        --image "${BackendAppName}:${imageVersion}" `
+        --image "${BackendAppName}:latest" `
         --file Dockerfile `
         .
     Pop-Location
+    Write-Host "   ✅ Backend image tagged: $imageVersion and latest" -ForegroundColor Green
 
     # Prepare environment variables for backend
     # Note: ALLOWED_ORIGINS is configured via Container App CORS settings, not environment variables
@@ -1149,7 +1155,7 @@ if (-not $InfraOnly) {
         az containerapp update `
             --name $BackendAppName `
             --resource-group $ResourceGroup `
-            --image "$ContainerRegistry.azurecr.io/demoai-backend:latest" `
+            --image "$ContainerRegistry.azurecr.io/${BackendAppName}:${imageVersion}" `
             --set-env-vars $backendEnvVars
         
         Write-Host "   ✅ Backend updated with new image" -ForegroundColor Green
@@ -1161,7 +1167,7 @@ if (-not $InfraOnly) {
             --name $BackendAppName `
             --resource-group $ResourceGroup `
             --environment $EnvironmentName `
-            --image "$ContainerRegistry.azurecr.io/demoai-backend:latest" `
+            --image "$ContainerRegistry.azurecr.io/${BackendAppName}:${imageVersion}" `
             --target-port 8000 `
             --ingress external `
             --registry-server "$ContainerRegistry.azurecr.io" `
@@ -1401,7 +1407,8 @@ if (-not $InfraOnly) {
 
     az acr build `
         --registry $ContainerRegistry `
-        --image demoai-frontend:latest `
+        --image "${FrontendAppName}:${imageVersion}" `
+        --image "${FrontendAppName}:latest" `
         --file Dockerfile `
         --build-arg "VITE_ENTRA_CLIENT_ID=$EntraFrontendClientId" `
         --build-arg "VITE_ENTRA_TENANT_ID=$EntraTenantId" `
@@ -1418,6 +1425,7 @@ if (-not $InfraOnly) {
         .
         
     Pop-Location
+    Write-Host "   ✅ Frontend image tagged: $imageVersion and latest" -ForegroundColor Green
 
     # Deploy or update frontend container app (external ingress - publicly accessible)
     Write-Host ""
@@ -1442,7 +1450,7 @@ if (-not $InfraOnly) {
         az containerapp update `
             --name $FrontendAppName `
             --resource-group $ResourceGroup `
-            --image "$ContainerRegistry.azurecr.io/demoai-frontend:latest"
+            --image "$ContainerRegistry.azurecr.io/${FrontendAppName}:${imageVersion}"
         
         Write-Host "   ✅ Frontend updated with new image" -ForegroundColor Green
     } else {
@@ -1453,7 +1461,7 @@ if (-not $InfraOnly) {
             --name $FrontendAppName `
             --resource-group $ResourceGroup `
             --environment $EnvironmentName `
-            --image "$ContainerRegistry.azurecr.io/demoai-frontend:latest" `
+            --image "$ContainerRegistry.azurecr.io/${FrontendAppName}:${imageVersion}" `
             --target-port 80 `
             --ingress external `
             --registry-server "$ContainerRegistry.azurecr.io" `
