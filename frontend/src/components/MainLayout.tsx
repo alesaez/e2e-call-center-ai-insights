@@ -1,4 +1,4 @@
-import { ReactNode, useState, useEffect, useCallback } from 'react';
+import React, { ReactNode, useState, useEffect, useCallback } from 'react';
 import {
   Box,
   Drawer,
@@ -29,6 +29,9 @@ import {
   Add as AddIcon,
   Delete as DeleteIcon,
   BarChart as BarChartIcon,
+  Settings as SettingsIcon,
+  SmartToy as SmartToyIcon,
+  Assessment as AssessmentIcon,
 } from '@mui/icons-material';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { useMsal } from '@azure/msal-react';
@@ -37,7 +40,7 @@ import apiClient from '../services/apiClient';
 import { ConversationProvider, useConversationContext } from '../contexts/ConversationContext';
 import { getLogoSrc } from '../config/tenantConfig';
 import UserMenu from './UserMenu';
-import { UIConfig, getTabConfig } from '../services/featureConfig';
+import { UIConfig, getVisibleTabs } from '../services/featureConfig';
 
 // Chat History types (matching ChatHistoryDrawer)
 interface ConversationSummary {
@@ -252,26 +255,51 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
     }
   };
 
-  // Build menu items based on UI configuration
-  const menuItems = [];
-  
-  const dashboardTab = getTabConfig(uiConfig, 'dashboard');
-  if (dashboardTab?.display) {
-    menuItems.push({ 
-      text: dashboardTab.labels.name, 
-      icon: <DashboardIcon />, 
-      path: '/dashboard' 
-    });
-  }
-  
-  const powerbiTab = getTabConfig(uiConfig, 'powerbi');
-  if (powerbiTab?.display) {
-    menuItems.push({ 
-      text: powerbiTab.labels.name, 
-      icon: <BarChartIcon />, 
-      path: '/powerbi' 
-    });
-  }
+  // Build menu items dynamically based on UI configuration order
+  const getIconForTab = (tabId: string) => {
+    switch (tabId) {
+      case 'dashboard':
+        return <DashboardIcon />;
+      case 'copilot-studio':
+        return <ChatIcon />;
+      case 'ai-foundry':
+        return <SmartToyIcon />;
+      case 'powerbi':
+        return <BarChartIcon />;
+      case 'powerbi-reports':
+        return <AssessmentIcon />;
+      case 'settings':
+        return <SettingsIcon />;
+      default:
+        return <DashboardIcon />;
+    }
+  };
+
+  const getRouteForTab = (tabId: string, tab: any) => {
+    switch (tabId) {
+      case 'dashboard':
+        return '/dashboard';
+      case 'copilot-studio':
+        return '/chatbot';
+      case 'ai-foundry':
+        return '/ai-foundry';
+      case 'powerbi':
+        return '/powerbi';
+      case 'powerbi-reports':
+        // Return first child report if available
+        if (tab.children && tab.children.length > 0) {
+          return `/powerbi-reports/${tab.children[0].id}`;
+        }
+        return '/powerbi-reports';
+      case 'settings':
+        return '/settings';
+      default:
+        return `/${tabId}`;
+    }
+  };
+
+  // Get all visible tabs in order from ui-config.json
+  const visibleTabs = getVisibleTabs(uiConfig);
 
   const drawer = (
     <Box sx={{ display: 'flex', flexDirection: 'column', height: '100%' }}>
@@ -312,126 +340,536 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
 
       <Divider />
 
-      {/* Navigation Menu */}
+      {/* Navigation Menu - Dynamic Order from ui-config.json */}
       <List sx={{ flexGrow: 1, pt: 2 }}>
-        {/* Dashboard */}
-        {menuItems.map((item) => (
-          <ListItem key={item.text} disablePadding sx={{ px: 1 }}>
-            <ListItemButton
-              selected={location.pathname === item.path}
-              onClick={() => {
-                navigate(item.path);
-                if (isMobile) setMobileOpen(false);
-              }}
-              sx={{
-                borderRadius: 1,
-                mb: 0.5,
-                '&.Mui-selected': {
-                  bgcolor: 'primary.main',
-                  color: 'white',
-                  '&:hover': {
-                    bgcolor: 'primary.dark',
-                  },
-                  '& .MuiListItemIcon-root': {
-                    color: 'white',
-                  },
-                },
-              }}
-            >
-              <ListItemIcon
-                sx={{
-                  color: location.pathname === item.path ? 'white' : 'inherit',
-                }}
-              >
-                {item.icon}
-              </ListItemIcon>
-              <ListItemText primary={item.text} />
-            </ListItemButton>
-          </ListItem>
-        ))}
-
-        {/* Power BI Reports with Submenu */}
-        {getTabConfig(uiConfig, 'powerbi-reports')?.display && (
-          <>
-            <ListItem disablePadding sx={{ px: 1 }}>
-              <ListItemButton
-                onClick={() => {
-                  handlePowerbiReportsSubmenuToggle();
-                }}
-                sx={{
-                  borderRadius: 1,
-                  mb: 0.5,
-                  '&.Mui-selected': {
-                    bgcolor: 'primary.main',
-                    color: 'white',
-                    '&:hover': {
-                      bgcolor: 'primary.dark',
-                    },
-                    '& .MuiListItemIcon-root': {
-                      color: 'white',
-                    },
-                  },
-                }}
-              >
-                <ListItemIcon>
-                  <BarChartIcon />
-                </ListItemIcon>
-                <ListItemText primary={getTabConfig(uiConfig, 'powerbi-reports')?.labels.name} />
-                {powerbiReportsSubmenuOpen ? <ExpandLess /> : <ExpandMore />}
-              </ListItemButton>
-            </ListItem>
-
-            {/* Power BI Reports Submenu */}
-            <Collapse in={powerbiReportsSubmenuOpen} timeout="auto" unmountOnExit>
-              <List component="div" disablePadding sx={{ pl: 1 }}>
-                {getTabConfig(uiConfig, 'powerbi-reports')?.children?.map((report) => (
-                  <ListItem key={report.id} disablePadding sx={{ px: 1 }}>
-                    <ListItemButton
-                      selected={location.pathname === `/powerbi-reports/${report.id}`}
-                      onClick={() => {
-                        navigate(`/powerbi-reports/${report.id}`);
-                        if (isMobile) setMobileOpen(false);
-                      }}
-                      sx={{
-                        borderRadius: 1,
-                        mb: 0.5,
-                        pl: 4,
-                        minHeight: 40,
-                        '&.Mui-selected': {
-                          bgcolor: 'primary.main',
+        {visibleTabs.map((tab) => {
+          // Power BI Reports with Submenu
+          if (tab.id === 'powerbi-reports') {
+            return (
+              <React.Fragment key={tab.id}>
+                <ListItem disablePadding sx={{ px: 1 }}>
+                  <ListItemButton
+                    onClick={() => {
+                      handlePowerbiReportsSubmenuToggle();
+                    }}
+                    sx={{
+                      borderRadius: 1,
+                      mb: 0.5,
+                      '&.Mui-selected': {
+                        bgcolor: 'primary.main',
+                        color: 'white',
+                        '&:hover': {
+                          bgcolor: 'primary.dark',
+                        },
+                        '& .MuiListItemIcon-root': {
                           color: 'white',
+                        },
+                      },
+                    }}
+                  >
+                    <ListItemIcon>
+                      <BarChartIcon />
+                    </ListItemIcon>
+                    <ListItemText primary={tab.labels.name} />
+                    {powerbiReportsSubmenuOpen ? <ExpandLess /> : <ExpandMore />}
+                  </ListItemButton>
+                </ListItem>
+
+                {/* Power BI Reports Submenu */}
+                <Collapse in={powerbiReportsSubmenuOpen} timeout="auto" unmountOnExit>
+                  <List component="div" disablePadding sx={{ pl: 1 }}>
+                    {tab.children?.map((report) => (
+                      <ListItem key={report.id} disablePadding sx={{ px: 1 }}>
+                        <ListItemButton
+                          selected={location.pathname === `/powerbi-reports/${report.id}`}
+                          onClick={() => {
+                            navigate(`/powerbi-reports/${report.id}`);
+                            if (isMobile) setMobileOpen(false);
+                          }}
+                          sx={{
+                            borderRadius: 1,
+                            mb: 0.5,
+                            pl: 4,
+                            minHeight: 40,
+                            '&.Mui-selected': {
+                              bgcolor: 'primary.main',
+                              color: 'white',
+                              '&:hover': {
+                                bgcolor: 'primary.dark',
+                              },
+                            },
+                            '&:hover': {
+                              bgcolor: location.pathname === `/powerbi-reports/${report.id}` ? 'primary.dark' : 'grey.100',
+                            },
+                          }}
+                        >
+                          <ListItemText 
+                            primary={report.labels.name}
+                            primaryTypographyProps={{
+                              variant: 'body2',
+                              fontWeight: location.pathname === `/powerbi-reports/${report.id}` ? 600 : 400,
+                            }}
+                          />
+                        </ListItemButton>
+                      </ListItem>
+                    ))}
+                  </List>
+                </Collapse>
+              </React.Fragment>
+            );
+          }
+
+          // Copilot Studio Chatbot with Submenu
+          if (tab.id === 'copilot-studio') {
+            return (
+              <React.Fragment key={tab.id}>
+                <ListItem disablePadding sx={{ px: 1 }}>
+                  <ListItemButton
+                    selected={location.pathname === '/chatbot'}
+                    onClick={() => {
+                      navigate('/chatbot');
+                      if (isMobile) setMobileOpen(false);
+                    }}
+                    sx={{
+                      borderRadius: 1,
+                      mb: 0.5,
+                      '&.Mui-selected': {
+                        bgcolor: 'primary.main',
+                        color: 'white',
+                        '&:hover': {
+                          bgcolor: 'primary.dark',
+                        },
+                        '& .MuiListItemIcon-root': {
+                          color: 'white',
+                        },
+                      },
+                    }}
+                  >
+                    <ListItemIcon
+                      sx={{
+                        color: location.pathname === '/chatbot' ? 'white' : 'inherit',
+                      }}
+                    >
+                      <ChatIcon />
+                    </ListItemIcon>
+                    <ListItemText primary={tab.labels.name} />
+                    <IconButton
+                      size="small"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleChatSubmenuToggle();
+                      }}
+                      sx={{
+                        color: location.pathname === '/chatbot' ? 'white' : 'inherit',
+                        '&:hover': {
+                          bgcolor: 'rgba(0, 0, 0, 0.04)',
+                        },
+                      }}
+                    >
+                      {chatSubmenuOpen ? <ExpandLess /> : <ExpandMore />}
+                    </IconButton>
+                  </ListItemButton>
+                </ListItem>
+
+                {/* Chat History Submenu */}
+                <Collapse in={chatSubmenuOpen} timeout="auto" unmountOnExit>
+                  <List component="div" disablePadding sx={{ pl: 1 }}>
+                    {/* Chat History Header with better spacing */}
+                    <ListItem disablePadding sx={{ px: 1 }}>
+                      <ListItemButton
+                        onClick={handleNewConversation}
+                        sx={{
+                          borderRadius: 1,
+                          mb: 0.5,
+                          pl: 3,
+                          minHeight: 40,
                           '&:hover': {
-                            bgcolor: 'primary.dark',
+                            bgcolor: 'grey.100',
                           },
-                        },
+                        }}
+                      >
+                        <ListItemIcon sx={{ minWidth: 32 }}>
+                          <AddIcon fontSize="small" color="primary" />
+                        </ListItemIcon>
+                        <ListItemText 
+                          primary="New Chat" 
+                          primaryTypographyProps={{
+                            variant: 'body2',
+                            fontWeight: 500,
+                          }}
+                        />
+                      </ListItemButton>
+                    </ListItem>
+
+                    {/* Chat History Section Label */}
+                    <ListItem sx={{ px: 1, pt: 1, pb: 0.5 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', pl: 3 }}>
+                        <HistoryIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} />
+                        <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                          RECENT CONVERSATIONS
+                        </Typography>
+                      </Box>
+                    </ListItem>
+
+                    {/* Loading State */}
+                    {conversationsLoading && (
+                      <ListItem sx={{ px: 1 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', py: 2 }}>
+                          <CircularProgress size={20} />
+                        </Box>
+                      </ListItem>
+                    )}
+
+                    {/* Error State */}
+                    {conversationsError && (
+                      <ListItem sx={{ px: 1 }}>
+                        <Alert severity="error" sx={{ width: '100%', fontSize: '0.75rem' }}>
+                          {conversationsError}
+                        </Alert>
+                      </ListItem>
+                    )}
+
+                    {/* Conversations List */}
+                    {!conversationsLoading && !conversationsError && conversations
+                      .slice(0, showAllConversations ? conversations.length : 5)
+                      .map((conversation) => {
+                        const isActive = location.pathname === '/chatbot' && 
+                                        (location.state?.conversationId === conversation.id || 
+                                         contextConversationId === conversation.id);
+                        
+                        return (
+                          <ListItem key={conversation.id} disablePadding sx={{ px: 1 }}>
+                            <ListItemButton
+                              onClick={() => handleConversationSelect(conversation)}
+                              sx={{
+                                borderRadius: 1,
+                                mb: 0.5,
+                                pl: 3,
+                                pr: 1,
+                                minHeight: 40,
+                                position: 'relative',
+                                bgcolor: isActive ? 'action.selected' : 'transparent',
+                                '&:hover': {
+                                  bgcolor: isActive ? 'action.selected' : 'grey.100',
+                                  '& .delete-button': {
+                                    opacity: 1,
+                                  },
+                                },
+                                '&:before': isActive ? {
+                                  content: '""',
+                                  position: 'absolute',
+                                  left: 0,
+                                  top: 0,
+                                  bottom: 0,
+                                  width: 3,
+                                  bgcolor: 'primary.main',
+                                  borderRadius: '0 3px 3px 0',
+                                } : {},
+                              }}
+                            >
+                              <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                                <Typography 
+                                  variant="body2" 
+                                  noWrap 
+                                  sx={{ 
+                                    fontSize: '0.875rem',
+                                    fontWeight: isActive ? 500 : 400,
+                                    color: isActive ? 'primary.main' : 'text.primary',
+                                  }}
+                                >
+                                  {conversation.title}
+                                </Typography>
+                              </Box>
+                              <IconButton
+                                className="delete-button"
+                                size="small"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteConversation(conversation.id);
+                                }}
+                                sx={{
+                                  opacity: 0,
+                                  transition: 'opacity 0.2s',
+                                  color: 'error.main',
+                                }}
+                              >
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </ListItemButton>
+                          </ListItem>
+                        );
+                      })}
+
+                    {/* Load More/Show Less Button */}
+                    {!conversationsLoading && !conversationsError && conversations.length > 5 && (
+                      <ListItem disablePadding sx={{ px: 1 }}>
+                        <ListItemButton
+                          onClick={() => setShowAllConversations(!showAllConversations)}
+                          sx={{
+                            borderRadius: 1,
+                            mb: 0.5,
+                            pl: 3,
+                            minHeight: 36,
+                            '&:hover': {
+                              bgcolor: 'grey.100',
+                            },
+                          }}
+                        >
+                          <ListItemText 
+                            primary={showAllConversations ? 'Show less' : `Load more (${conversations.length - 5} more)`}
+                            primaryTypographyProps={{
+                              variant: 'caption',
+                              color: 'primary.main',
+                              fontWeight: 500,
+                            }}
+                          />
+                        </ListItemButton>
+                      </ListItem>
+                    )}
+
+                    {/* No Conversations Message */}
+                    {!conversationsLoading && !conversationsError && conversations.length === 0 && (
+                      <ListItem sx={{ px: 1 }}>
+                        <Typography variant="body2" color="text.secondary" sx={{ pl: 3, fontSize: '0.75rem', fontStyle: 'italic' }}>
+                          No conversations yet. Start a new chat!
+                        </Typography>
+                      </ListItem>
+                    )}
+                  </List>
+                </Collapse>
+              </React.Fragment>
+            );
+          }
+
+          // AI Foundry Chatbot with Submenu
+          if (tab.id === 'ai-foundry') {
+            return (
+              <React.Fragment key={tab.id}>
+                <ListItem disablePadding sx={{ px: 1 }}>
+                  <ListItemButton
+                    selected={location.pathname === '/ai-foundry'}
+                    onClick={() => {
+                      navigate('/ai-foundry');
+                      if (isMobile) setMobileOpen(false);
+                    }}
+                    sx={{
+                      borderRadius: 1,
+                      mb: 0.5,
+                      '&.Mui-selected': {
+                        bgcolor: 'primary.main',
+                        color: 'white',
                         '&:hover': {
-                          bgcolor: location.pathname === `/powerbi-reports/${report.id}` ? 'primary.dark' : 'grey.100',
+                          bgcolor: 'primary.dark',
+                        },
+                        '& .MuiListItemIcon-root': {
+                          color: 'white',
+                        },
+                      },
+                    }}
+                  >
+                    <ListItemIcon
+                      sx={{
+                        color: location.pathname === '/ai-foundry' ? 'white' : 'inherit',
+                      }}
+                    >
+                      <ChatIcon />
+                    </ListItemIcon>
+                    <ListItemText primary={tab.labels.name} />
+                    <IconButton
+                      size="small"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleAiFoundrySubmenuToggle();
+                      }}
+                      sx={{
+                        color: location.pathname === '/ai-foundry' ? 'white' : 'inherit',
+                        '&:hover': {
+                          bgcolor: 'rgba(0, 0, 0, 0.04)',
                         },
                       }}
                     >
-                      <ListItemText 
-                        primary={report.labels.name}
-                        primaryTypographyProps={{
-                          variant: 'body2',
-                          fontWeight: location.pathname === `/powerbi-reports/${report.id}` ? 600 : 400,
-                        }}
-                      />
-                    </ListItemButton>
-                  </ListItem>
-                ))}
-              </List>
-            </Collapse>
-          </>
-        )}
+                      {aiFoundrySubmenuOpen ? <ExpandLess /> : <ExpandMore />}
+                    </IconButton>
+                  </ListItemButton>
+                </ListItem>
 
-        {/* Copilot Studio Chatbot with Submenu */}
-        {getTabConfig(uiConfig, 'copilot-studio')?.display && (
-          <>
-            <ListItem disablePadding sx={{ px: 1 }}>
+                {/* AI Foundry History Submenu */}
+                <Collapse in={aiFoundrySubmenuOpen} timeout="auto" unmountOnExit>
+                  <List component="div" disablePadding sx={{ pl: 1 }}>
+                    {/* New Chat Button */}
+                    <ListItem disablePadding sx={{ px: 1 }}>
+                      <ListItemButton
+                        onClick={handleNewAiFoundryConversation}
+                        sx={{
+                          borderRadius: 1,
+                          mb: 0.5,
+                          pl: 3,
+                          minHeight: 40,
+                          '&:hover': {
+                            bgcolor: 'grey.100',
+                          },
+                        }}
+                      >
+                        <ListItemIcon sx={{ minWidth: 32 }}>
+                          <AddIcon fontSize="small" color="primary" />
+                        </ListItemIcon>
+                        <ListItemText 
+                          primary="New Chat" 
+                          primaryTypographyProps={{
+                            variant: 'body2',
+                            fontWeight: 500,
+                          }}
+                        />
+                      </ListItemButton>
+                    </ListItem>
+
+                    {/* History Section Label */}
+                    <ListItem sx={{ px: 1, pt: 1, pb: 0.5 }}>
+                      <Box sx={{ display: 'flex', alignItems: 'center', pl: 3 }}>
+                        <HistoryIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} />
+                        <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
+                          RECENT CONVERSATIONS
+                        </Typography>
+                      </Box>
+                    </ListItem>
+
+                    {/* Loading State */}
+                    {aiFoundryConversationsLoading && (
+                      <ListItem sx={{ px: 1 }}>
+                        <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', py: 2 }}>
+                          <CircularProgress size={20} />
+                        </Box>
+                      </ListItem>
+                    )}
+
+                    {/* Error State */}
+                    {aiFoundryConversationsError && (
+                      <ListItem sx={{ px: 1 }}>
+                        <Alert severity="error" sx={{ width: '100%', fontSize: '0.75rem' }}>
+                          {aiFoundryConversationsError}
+                        </Alert>
+                      </ListItem>
+                    )}
+
+                    {/* Conversations List */}
+                    {!aiFoundryConversationsLoading && !aiFoundryConversationsError && aiFoundryConversations
+                      .slice(0, showAllAiFoundryConversations ? aiFoundryConversations.length : 5)
+                      .map((conversation) => {
+                        const isActive = location.pathname === '/ai-foundry' && 
+                                        (location.state?.conversationId === conversation.id || 
+                                         contextConversationId === conversation.id);
+                        
+                        return (
+                          <ListItem key={conversation.id} disablePadding sx={{ px: 1 }}>
+                            <ListItemButton
+                              onClick={() => handleAiFoundryConversationSelect(conversation)}
+                              sx={{
+                                borderRadius: 1,
+                                mb: 0.5,
+                                pl: 3,
+                                pr: 1,
+                                minHeight: 40,
+                                position: 'relative',
+                                bgcolor: isActive ? 'action.selected' : 'transparent',
+                                '&:hover': {
+                                  bgcolor: isActive ? 'action.selected' : 'grey.100',
+                                  '& .delete-button': {
+                                    opacity: 1,
+                                  },
+                                },
+                                '&:before': isActive ? {
+                                  content: '""',
+                                  position: 'absolute',
+                                  left: 0,
+                                  top: 0,
+                                  bottom: 0,
+                                  width: 3,
+                                  bgcolor: 'primary.main',
+                                  borderRadius: '0 3px 3px 0',
+                                } : {},
+                              }}
+                            >
+                              <Box sx={{ flexGrow: 1, minWidth: 0 }}>
+                                <Typography 
+                                  variant="body2" 
+                                  noWrap 
+                                  sx={{ 
+                                    fontSize: '0.875rem',
+                                    fontWeight: isActive ? 500 : 400,
+                                    color: isActive ? 'primary.main' : 'text.primary',
+                                  }}
+                                >
+                                  {conversation.title}
+                                </Typography>
+                              </Box>
+                              <IconButton
+                                className="delete-button"
+                                size="small"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  handleDeleteAiFoundryConversation(conversation.id);
+                                }}
+                                sx={{
+                                  opacity: 0,
+                                  transition: 'opacity 0.2s',
+                                  color: 'error.main',
+                                }}
+                              >
+                                <DeleteIcon fontSize="small" />
+                              </IconButton>
+                            </ListItemButton>
+                          </ListItem>
+                        );
+                      })}
+
+                    {/* Load More/Show Less Button */}
+                    {!aiFoundryConversationsLoading && !aiFoundryConversationsError && aiFoundryConversations.length > 5 && (
+                      <ListItem disablePadding sx={{ px: 1 }}>
+                        <ListItemButton
+                          onClick={() => setShowAllAiFoundryConversations(!showAllAiFoundryConversations)}
+                          sx={{
+                            borderRadius: 1,
+                            mb: 0.5,
+                            pl: 3,
+                            minHeight: 36,
+                            '&:hover': {
+                              bgcolor: 'grey.100',
+                            },
+                          }}
+                        >
+                          <ListItemText 
+                            primary={showAllAiFoundryConversations ? 'Show less' : `Load more (${aiFoundryConversations.length - 5} more)`}
+                            primaryTypographyProps={{
+                              variant: 'caption',
+                              color: 'primary.main',
+                              fontWeight: 500,
+                            }}
+                          />
+                        </ListItemButton>
+                      </ListItem>
+                    )}
+
+                    {/* No Conversations Message */}
+                    {!aiFoundryConversationsLoading && !aiFoundryConversationsError && aiFoundryConversations.length === 0 && (
+                      <ListItem sx={{ px: 1 }}>
+                        <Typography variant="body2" color="text.secondary" sx={{ pl: 3, fontSize: '0.75rem', fontStyle: 'italic' }}>
+                          No conversations yet. Start a new AI Foundry chat!
+                        </Typography>
+                      </ListItem>
+                    )}
+                  </List>
+                </Collapse>
+              </React.Fragment>
+            );
+          }
+
+          // Simple tabs - Dashboard, PowerBI, Settings, etc.
+          return (
+            <ListItem key={tab.id} disablePadding sx={{ px: 1 }}>
               <ListItemButton
-                selected={location.pathname === '/chatbot'}
+                selected={location.pathname === getRouteForTab(tab.id, tab)}
                 onClick={() => {
-                  navigate('/chatbot');
+                  navigate(getRouteForTab(tab.id, tab));
                   if (isMobile) setMobileOpen(false);
                 }}
                 sx={{
@@ -451,418 +889,16 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
               >
                 <ListItemIcon
                   sx={{
-                    color: location.pathname === '/chatbot' ? 'white' : 'inherit',
+                    color: location.pathname === getRouteForTab(tab.id, tab) ? 'white' : 'inherit',
                   }}
                 >
-                  <ChatIcon />
+                  {getIconForTab(tab.id)}
                 </ListItemIcon>
-                <ListItemText primary={getTabConfig(uiConfig, 'copilot-studio')?.labels.name} />
-                <IconButton
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleChatSubmenuToggle();
-                  }}
-                  sx={{
-                    color: location.pathname === '/chatbot' ? 'white' : 'inherit',
-                    '&:hover': {
-                      bgcolor: 'rgba(0, 0, 0, 0.04)',
-                    },
-                  }}
-                >
-                  {chatSubmenuOpen ? <ExpandLess /> : <ExpandMore />}
-                </IconButton>
+                <ListItemText primary={tab.labels.name} />
               </ListItemButton>
             </ListItem>
-
-            {/* Chat History Submenu */}
-            <Collapse in={chatSubmenuOpen} timeout="auto" unmountOnExit>
-          <List component="div" disablePadding sx={{ pl: 1 }}>
-            {/* Chat History Header with better spacing */}
-            <ListItem disablePadding sx={{ px: 1 }}>
-              <ListItemButton
-                onClick={handleNewConversation}
-                sx={{
-                  borderRadius: 1,
-                  mb: 0.5,
-                  pl: 3,
-                  minHeight: 40,
-                  '&:hover': {
-                    bgcolor: 'grey.100',
-                  },
-                }}
-              >
-                <ListItemIcon sx={{ minWidth: 32 }}>
-                  <AddIcon fontSize="small" color="primary" />
-                </ListItemIcon>
-                <ListItemText 
-                  primary="New Chat" 
-                  primaryTypographyProps={{
-                    variant: 'body2',
-                    fontWeight: 500,
-                  }}
-                />
-              </ListItemButton>
-            </ListItem>
-
-            {/* Chat History Section Label */}
-            <ListItem sx={{ px: 1, pt: 1, pb: 0.5 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', pl: 3 }}>
-                <HistoryIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} />
-                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-                  RECENT CONVERSATIONS
-                </Typography>
-              </Box>
-            </ListItem>
-
-            {/* Loading State */}
-            {conversationsLoading && (
-              <ListItem sx={{ px: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', py: 2 }}>
-                  <CircularProgress size={20} />
-                </Box>
-              </ListItem>
-            )}
-
-            {/* Error State */}
-            {conversationsError && (
-              <ListItem sx={{ px: 1 }}>
-                <Alert severity="error" sx={{ width: '100%', fontSize: '0.75rem' }}>
-                  {conversationsError}
-                </Alert>
-              </ListItem>
-            )}
-
-            {/* Conversations List */}
-            {!conversationsLoading && !conversationsError && conversations
-              .slice(0, showAllConversations ? conversations.length : 5)
-              .map((conversation) => {
-                const isActive = location.pathname === '/chatbot' && 
-                                (location.state?.conversationId === conversation.id || 
-                                 contextConversationId === conversation.id);
-                
-                return (
-                  <ListItem key={conversation.id} disablePadding sx={{ px: 1 }}>
-                    <ListItemButton
-                      onClick={() => handleConversationSelect(conversation)}
-                      sx={{
-                        borderRadius: 1,
-                        mb: 0.5,
-                        pl: 3,
-                        pr: 1,
-                        minHeight: 40,
-                        position: 'relative',
-                        bgcolor: isActive ? 'action.selected' : 'transparent',
-                        '&:hover': {
-                          bgcolor: isActive ? 'action.selected' : 'grey.100',
-                          '& .delete-button': {
-                            opacity: 1,
-                          },
-                        },
-                        '&:before': isActive ? {
-                          content: '""',
-                          position: 'absolute',
-                          left: 0,
-                          top: 0,
-                          bottom: 0,
-                          width: 3,
-                          bgcolor: 'primary.main',
-                          borderRadius: '0 3px 3px 0',
-                        } : {},
-                      }}
-                    >
-                      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                        <Typography 
-                          variant="body2" 
-                          noWrap 
-                          sx={{ 
-                            fontSize: '0.875rem',
-                            fontWeight: isActive ? 500 : 400,
-                            color: isActive ? 'primary.main' : 'text.primary',
-                          }}
-                        >
-                          {conversation.title}
-                        </Typography>
-                      </Box>
-                      <IconButton
-                        className="delete-button"
-                        size="small"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteConversation(conversation.id);
-                        }}
-                        sx={{
-                          opacity: 0,
-                          transition: 'opacity 0.2s',
-                          color: 'error.main',
-                        }}
-                      >
-                        <DeleteIcon fontSize="small" />
-                      </IconButton>
-                    </ListItemButton>
-                  </ListItem>
-                );
-              })}
-
-            {/* Load More/Show Less Button */}
-            {!conversationsLoading && !conversationsError && conversations.length > 5 && (
-              <ListItem disablePadding sx={{ px: 1 }}>
-                <ListItemButton
-                  onClick={() => setShowAllConversations(!showAllConversations)}
-                  sx={{
-                    borderRadius: 1,
-                    mb: 0.5,
-                    pl: 3,
-                    minHeight: 36,
-                    '&:hover': {
-                      bgcolor: 'grey.100',
-                    },
-                  }}
-                >
-                  <ListItemText 
-                    primary={showAllConversations ? 'Show less' : `Load more (${conversations.length - 5} more)`}
-                    primaryTypographyProps={{
-                      variant: 'caption',
-                      color: 'primary.main',
-                      fontWeight: 500,
-                    }}
-                  />
-                </ListItemButton>
-              </ListItem>
-            )}
-
-            {/* No Conversations Message */}
-            {!conversationsLoading && !conversationsError && conversations.length === 0 && (
-              <ListItem sx={{ px: 1 }}>
-                <Typography variant="body2" color="text.secondary" sx={{ pl: 3, fontSize: '0.75rem', fontStyle: 'italic' }}>
-                  No conversations yet. Start a new chat!
-                </Typography>
-              </ListItem>
-            )}
-          </List>
-        </Collapse>
-        </>
-        )}
-
-        {/* AI Foundry Chatbot with Submenu */}
-        {getTabConfig(uiConfig, 'ai-foundry')?.display && (
-          <>
-            <ListItem disablePadding sx={{ px: 1 }}>
-              <ListItemButton
-                selected={location.pathname === '/ai-foundry'}
-                onClick={() => {
-                  navigate('/ai-foundry');
-                  if (isMobile) setMobileOpen(false);
-                }}
-                sx={{
-                  borderRadius: 1,
-                  mb: 0.5,
-                  '&.Mui-selected': {
-                    bgcolor: 'primary.main',
-                    color: 'white',
-                    '&:hover': {
-                      bgcolor: 'primary.dark',
-                    },
-                    '& .MuiListItemIcon-root': {
-                      color: 'white',
-                    },
-                  },
-                }}
-              >
-                <ListItemIcon
-                  sx={{
-                    color: location.pathname === '/ai-foundry' ? 'white' : 'inherit',
-                  }}
-                >
-                  <ChatIcon />
-                </ListItemIcon>
-                <ListItemText primary={getTabConfig(uiConfig, 'ai-foundry')?.labels.name} />
-                <IconButton
-                  size="small"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleAiFoundrySubmenuToggle();
-                  }}
-                  sx={{
-                    color: location.pathname === '/ai-foundry' ? 'white' : 'inherit',
-                    '&:hover': {
-                      bgcolor: 'rgba(0, 0, 0, 0.04)',
-                    },
-                  }}
-                >
-                  {aiFoundrySubmenuOpen ? <ExpandLess /> : <ExpandMore />}
-                </IconButton>
-              </ListItemButton>
-            </ListItem>
-
-            {/* AI Foundry History Submenu */}
-            <Collapse in={aiFoundrySubmenuOpen} timeout="auto" unmountOnExit>
-          <List component="div" disablePadding sx={{ pl: 1 }}>
-            {/* New Chat Button */}
-            <ListItem disablePadding sx={{ px: 1 }}>
-              <ListItemButton
-                onClick={handleNewAiFoundryConversation}
-                sx={{
-                  borderRadius: 1,
-                  mb: 0.5,
-                  pl: 3,
-                  minHeight: 40,
-                  '&:hover': {
-                    bgcolor: 'grey.100',
-                  },
-                }}
-              >
-                <ListItemIcon sx={{ minWidth: 32 }}>
-                  <AddIcon fontSize="small" color="primary" />
-                </ListItemIcon>
-                <ListItemText 
-                  primary="New Chat" 
-                  primaryTypographyProps={{
-                    variant: 'body2',
-                    fontWeight: 500,
-                  }}
-                />
-              </ListItemButton>
-            </ListItem>
-
-            {/* History Section Label */}
-            <ListItem sx={{ px: 1, pt: 1, pb: 0.5 }}>
-              <Box sx={{ display: 'flex', alignItems: 'center', pl: 3 }}>
-                <HistoryIcon fontSize="small" sx={{ mr: 1, color: 'text.secondary' }} />
-                <Typography variant="caption" color="text.secondary" sx={{ fontWeight: 600 }}>
-                  RECENT CONVERSATIONS
-                </Typography>
-              </Box>
-            </ListItem>
-
-            {/* Loading State */}
-            {aiFoundryConversationsLoading && (
-              <ListItem sx={{ px: 1 }}>
-                <Box sx={{ display: 'flex', alignItems: 'center', justifyContent: 'center', width: '100%', py: 2 }}>
-                  <CircularProgress size={20} />
-                </Box>
-              </ListItem>
-            )}
-
-            {/* Error State */}
-            {aiFoundryConversationsError && (
-              <ListItem sx={{ px: 1 }}>
-                <Alert severity="error" sx={{ width: '100%', fontSize: '0.75rem' }}>
-                  {aiFoundryConversationsError}
-                </Alert>
-              </ListItem>
-            )}
-
-            {/* Conversations List */}
-            {!aiFoundryConversationsLoading && !aiFoundryConversationsError && aiFoundryConversations
-              .slice(0, showAllAiFoundryConversations ? aiFoundryConversations.length : 5)
-              .map((conversation) => {
-                const isActive = location.pathname === '/ai-foundry' && 
-                                (location.state?.conversationId === conversation.id || 
-                                 contextConversationId === conversation.id);
-                
-                return (
-                  <ListItem key={conversation.id} disablePadding sx={{ px: 1 }}>
-                    <ListItemButton
-                      onClick={() => handleAiFoundryConversationSelect(conversation)}
-                      sx={{
-                        borderRadius: 1,
-                        mb: 0.5,
-                        pl: 3,
-                        pr: 1,
-                        minHeight: 40,
-                        position: 'relative',
-                        bgcolor: isActive ? 'action.selected' : 'transparent',
-                        '&:hover': {
-                          bgcolor: isActive ? 'action.selected' : 'grey.100',
-                          '& .delete-button': {
-                            opacity: 1,
-                          },
-                        },
-                        '&:before': isActive ? {
-                          content: '""',
-                          position: 'absolute',
-                          left: 0,
-                          top: 0,
-                          bottom: 0,
-                          width: 3,
-                          bgcolor: 'primary.main',
-                          borderRadius: '0 3px 3px 0',
-                        } : {},
-                      }}
-                    >
-                      <Box sx={{ flexGrow: 1, minWidth: 0 }}>
-                        <Typography 
-                          variant="body2" 
-                          noWrap 
-                          sx={{ 
-                            fontSize: '0.875rem',
-                            fontWeight: isActive ? 500 : 400,
-                            color: isActive ? 'primary.main' : 'text.primary',
-                          }}
-                        >
-                          {conversation.title}
-                        </Typography>
-                      </Box>
-                      <IconButton
-                        className="delete-button"
-                        size="small"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleDeleteAiFoundryConversation(conversation.id);
-                        }}
-                        sx={{
-                          opacity: 0,
-                          transition: 'opacity 0.2s',
-                          color: 'error.main',
-                        }}
-                      >
-                        <DeleteIcon fontSize="small" />
-                      </IconButton>
-                    </ListItemButton>
-                  </ListItem>
-                );
-              })}
-
-            {/* Load More/Show Less Button */}
-            {!aiFoundryConversationsLoading && !aiFoundryConversationsError && aiFoundryConversations.length > 5 && (
-              <ListItem disablePadding sx={{ px: 1 }}>
-                <ListItemButton
-                  onClick={() => setShowAllAiFoundryConversations(!showAllAiFoundryConversations)}
-                  sx={{
-                    borderRadius: 1,
-                    mb: 0.5,
-                    pl: 3,
-                    minHeight: 36,
-                    '&:hover': {
-                      bgcolor: 'grey.100',
-                    },
-                  }}
-                >
-                  <ListItemText 
-                    primary={showAllAiFoundryConversations ? 'Show less' : `Load more (${aiFoundryConversations.length - 5} more)`}
-                    primaryTypographyProps={{
-                      variant: 'caption',
-                      color: 'primary.main',
-                      fontWeight: 500,
-                    }}
-                  />
-                </ListItemButton>
-              </ListItem>
-            )}
-
-            {/* No Conversations Message */}
-            {!aiFoundryConversationsLoading && !aiFoundryConversationsError && aiFoundryConversations.length === 0 && (
-              <ListItem sx={{ px: 1 }}>
-                <Typography variant="body2" color="text.secondary" sx={{ pl: 3, fontSize: '0.75rem', fontStyle: 'italic' }}>
-                  No conversations yet. Start a new AI Foundry chat!
-                </Typography>
-              </ListItem>
-            )}
-          </List>
-        </Collapse>
-        </>
-        )}
+          );
+        })}
       </List>
     </Box>
   );

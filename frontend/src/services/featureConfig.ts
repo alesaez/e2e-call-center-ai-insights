@@ -274,6 +274,42 @@ export function shouldDisplayTab(uiConfig: UIConfig, tabId: string): boolean {
 }
 
 /**
+ * Get the default route based on enabled tabs
+ * Returns the first available enabled tab or settings as fallback
+ */
+export function getDefaultRoute(uiConfig: UIConfig): string {
+  // Get the first visible tab from the config
+  const visibleTabs = getVisibleTabs(uiConfig);
+  
+  if (visibleTabs.length > 0) {
+    const firstTab = visibleTabs[0];
+    
+    // Map tab IDs to their routes
+    switch (firstTab.id) {
+      case 'dashboard':
+        return '/dashboard';
+      case 'copilot-studio':
+        return '/chatbot';
+      case 'ai-foundry':
+        return '/ai-foundry';
+      case 'powerbi':
+        return '/powerbi';
+      case 'powerbi-reports':
+        // If powerbi-reports has children, go to first child
+        if (firstTab.children && firstTab.children.length > 0) {
+          return `/powerbi-reports/${firstTab.children[0].id}`;
+        }
+        break;
+      case 'settings':
+        return '/settings';
+    }
+  }
+  
+  // Fallback to settings if nothing else is available
+  return '/settings';
+}
+
+/**
  * Clear cached UI configuration (useful for testing or refresh)
  */
 export function clearUIConfigCache(): void {

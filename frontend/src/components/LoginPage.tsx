@@ -3,19 +3,24 @@ import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { loginRequest } from '../authConfig';
 import { InteractionStatus } from '@azure/msal-browser';
+import { UIConfig, getDefaultRoute } from '../services/featureConfig';
 
-export default function LoginPage() {
+interface LoginPageProps {
+  uiConfig: UIConfig;
+}
+
+export default function LoginPage({ uiConfig }: LoginPageProps) {
   const { instance, accounts, inProgress } = useMsal();
   const navigate = useNavigate();
   const hasRedirected = useRef(false);
 
   useEffect(() => {
-    // If already authenticated and not in the middle of interaction, redirect to dashboard
+    // If already authenticated and not in the middle of interaction, redirect to default route
     if (accounts.length > 0 && inProgress === InteractionStatus.None && !hasRedirected.current) {
       hasRedirected.current = true;
-      navigate('/dashboard', { replace: true });
+      navigate(getDefaultRoute(uiConfig), { replace: true });
     }
-  }, [accounts, inProgress, navigate]);
+  }, [accounts, inProgress, navigate, uiConfig]);
 
   const handleLogin = async () => {
     try {

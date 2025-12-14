@@ -13,7 +13,7 @@ import PowerBIReportPage from './components/PowerBIReportPage';
 import PowerBIReportsPage from './components/PowerBIReportsPage';
 import { createAppTheme, getTenantConfig, TenantConfig, defaultTenantConfig } from './theme/theme';
 import { applyFavicon, updateDocumentTitle } from './config/tenantConfig';
-import { getUIConfig, UIConfig, shouldDisplayTab } from './services/featureConfig';
+import { getUIConfig, UIConfig, shouldDisplayTab, getDefaultRoute } from './services/featureConfig';
 import { CircularProgress, Box } from '@mui/material';
 
 function App() {
@@ -67,20 +67,11 @@ function App() {
     );
   }
 
-  // Determine the default route based on enabled features
-  const getDefaultRoute = () => {
-    if (shouldDisplayTab(uiConfig, 'dashboard')) return '/dashboard';
-    if (shouldDisplayTab(uiConfig, 'copilot-studio')) return '/chatbot';
-    if (shouldDisplayTab(uiConfig, 'ai-foundry')) return '/ai-foundry';
-    if (shouldDisplayTab(uiConfig, 'powerbi')) return '/powerbi';
-    return '/settings';
-  };
-
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
       <Routes>
-        <Route path="/login" element={<LoginPage />} />
+        <Route path="/login" element={<LoginPage uiConfig={uiConfig} />} />
         
         {/* Dashboard Route */}
         {shouldDisplayTab(uiConfig, 'dashboard') && (
@@ -165,7 +156,7 @@ function App() {
         />
         
         {/* Default Route */}
-        <Route path="/" element={<Navigate to={getDefaultRoute()} replace />} />
+        <Route path="/" element={<Navigate to={getDefaultRoute(uiConfig)} replace />} />
       </Routes>
     </ThemeProvider>
   );
