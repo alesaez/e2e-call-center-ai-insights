@@ -471,6 +471,213 @@ async def get_powerbi_embed_config(
             detail=f"Failed to generate Power BI embed configuration: {str(e)}"
         )
 
+@app.post("/api/powerbi/export-pdf")
+async def export_powerbi_report_to_pdf(
+    request: Request,
+    token_payload: Dict = Depends(verify_token),
+    reportId: Optional[str] = None,
+    workspaceId: Optional[str] = None
+):
+    """
+    Initiate PDF export for a Power BI report.
+    Returns an export ID that can be used to check status and download the file.
+    
+    Args:
+        reportId: Optional specific report ID (overrides default from settings)
+        workspaceId: Optional specific workspace ID (overrides default from settings)
+    
+    Returns:
+        Dictionary containing:
+        - id: Export operation ID
+        - status: Export status (e.g., 'Running', 'Succeeded', 'Failed')
+    
+    Raises:
+        HTTPException: If Power BI is not configured or export fails
+    """
+    if not powerbi_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Power BI service is not configured."
+        )
+    
+    try:
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing or invalid Authorization header"
+            )
+        
+        user_access_token = auth_header[7:]
+        
+        logger.info(f"Initiating PDF export for user: {token_payload.get('preferred_username', 'unknown')}")
+        
+        export_data = await powerbi_service.export_report_to_pdf(
+            user_access_token,
+            report_id=reportId,
+            workspace_id=workspaceId
+        )
+        
+        return export_data
+        
+    except Exception as e:
+        logger.error(f"Failed to export Power BI report to PDF: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to export report: {str(e)}"
+        )
+
+@app.get("/api/powerbi/export-status/{export_id}")
+async def get_powerbi_export_status(
+    export_id: str,
+    request: Request,
+    token_payload: Dict = Depends(verify_token),
+    reportId: Optional[str] = None,
+    workspaceId: Optional[str] = None
+):
+    """
+    Get the status of a Power BI export operation.
+    
+    Args:
+        export_id: Export operation ID from the export-pdf endpoint
+        reportId: Optional specific report ID
+        workspaceId: Optional specific workspace ID
+    
+    Returns:
+        Dictionary with export status and information
+    
+    Raises:
+        HTTPException: If status check fails
+    """
+    if not powerbi_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Power BI service is not configured."
+        )
+    
+    try:
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing or invalid Authorization header"
+            )
+        
+        user_access_token = auth_header[7:]
+        
+        logger.info(f"Getting export status for export_id: {export_id}")
+        
+        status_data = await powerbi_service.get_export_status(
+            user_access_token,
+            export_id,
+            report_id=reportId,
+            workspace_id=workspaceId
+        )
+        
+        return status_data
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get export status: {str(e)}", exc_info=True)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to get export status: {str(e)}"
+        )
+
+@app.get("/api/powerbi/export-file/{export_id}")
+async def download_powerbi_export_file(
+    export_id: str,
+    request: Request,
+    token_payload: Dict = Depends(verify_token),
+    reportId: Optional[str] = None,
+    workspaceId: Optional[str] = None
+):
+    """
+    Download the exported PDF file.
+    
+    Args:
+        export_id: Export operation ID
+        reportId: Optional specific report ID
+        workspaceId: Optional specific workspace ID
+    
+    Returns:
+        PDF file as response
+    
+    Raises:
+        HTTPException: If download fails
+    """
+    if not powerbi_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Power BI service is not configured."
+        )
+    
+    try:
+        auth_header = request.headers.get("Authorization", "")
+        if not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing or invalid Authorization header"
+            )
+        
+        user_access_token = auth_header[7:]
+        
+        file_bytes = await powerbi_service.get_export_file(
+            user_access_token,
+            export_id,
+            report_id=reportId,
+            workspace_id=workspaceId
+        )
+        
+        from fastapi.responses import Response
+        return Response(
+            content=file_bytes,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": f"attachment; filename=powerbi-report-{export_id}.pdf"
+            }
+        )
+        
+    except Exception as e:
+        logger.error(f"Failed to download export file: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to download file: {str(e)}"
+        )
+
+@app.get("/api/powerbi/web-url")
+async def get_powerbi_web_url(
+    token_payload: Dict = Depends(verify_token),
+    reportId: Optional[str] = None,
+    workspaceId: Optional[str] = None
+):
+    """
+    Get the Power BI web URL for opening the report in a browser.
+    
+    Args:
+        reportId: Optional specific report ID
+        workspaceId: Optional specific workspace ID
+    
+    Returns:
+        Dictionary with webUrl
+    
+    Raises:
+        HTTPException: If Power BI is not configured
+    """
+    if not powerbi_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Power BI service is not configured."
+        )
+    
+    web_url = powerbi_service.get_report_web_url(
+        report_id=reportId,
+        workspace_id=workspaceId
+    )
+    
+    return {"webUrl": web_url}
+
 # ============================================================================
 # Copilot Studio Endpoints
 # ============================================================================

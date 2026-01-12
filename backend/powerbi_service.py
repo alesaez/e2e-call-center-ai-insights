@@ -290,3 +290,166 @@ class PowerBIService:
             # Restore original values
             self.report_id = original_report_id
             self.workspace_id = original_workspace_id
+    
+    async def export_report_to_pdf(
+        self,
+        user_access_token: str,
+        report_id: Optional[str] = None,
+        workspace_id: Optional[str] = None
+    ) -> Dict[str, str]:
+        """
+        Export Power BI report to PDF.
+        Returns export ID that can be used to poll for completion.
+        
+        Args:
+            user_access_token: The user's access token from the frontend
+            report_id: Optional specific report ID (overrides instance default)
+            workspace_id: Optional specific workspace ID (overrides instance default)
+        
+        Returns:
+            Dictionary with exportId and status
+        
+        Raises:
+            Exception: If export request fails
+        """
+        target_report_id = report_id or self.report_id
+        target_workspace_id = workspace_id or self.workspace_id
+        
+        powerbi_access_token = await self._get_access_token(user_access_token)
+        
+        url = f"{self.POWER_BI_API_BASE}/groups/{target_workspace_id}/reports/{target_report_id}/ExportTo"
+        
+        request_body = {
+            "format": "PDF"
+        }
+        
+        logger.info(f"Requesting PDF export for report: {target_report_id}")
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(
+                url,
+                json=request_body,
+                headers={
+                    "Authorization": f"Bearer {powerbi_access_token}",
+                    "Content-Type": "application/json"
+                }
+            )
+            
+            if response.status_code != 202:
+                error_msg = f"Failed to export report: {response.status_code} - {response.text}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+            
+            export_data = response.json()
+            logger.info(f"Export initiated: {export_data.get('id')}")
+            return export_data
+    
+    async def get_export_status(
+        self,
+        user_access_token: str,
+        export_id: str,
+        report_id: Optional[str] = None,
+        workspace_id: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Get the status of a Power BI export operation.
+        
+        Args:
+            user_access_token: The user's access token from the frontend
+            export_id: Export operation ID
+            report_id: Optional specific report ID (overrides instance default)
+            workspace_id: Optional specific workspace ID (overrides instance default)
+        
+        Returns:
+            Dictionary with status and other export information
+        
+        Raises:
+            Exception: If status check fails
+        """
+        target_report_id = report_id or self.report_id
+        target_workspace_id = workspace_id or self.workspace_id
+        
+        powerbi_access_token = await self._get_access_token(user_access_token)
+        
+        url = f"{self.POWER_BI_API_BASE}/groups/{target_workspace_id}/reports/{target_report_id}/exports/{export_id}"
+        
+        logger.info(f"Checking export status: {export_id} for report: {target_report_id}")
+        
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {powerbi_access_token}"}
+            )
+            
+            # Power BI returns 202 (Accepted) while export is in progress, 200 when complete
+            if response.status_code not in [200, 202]:
+                error_msg = f"Failed to get export status: {response.status_code} - {response.text}"
+                logger.error(error_msg)
+                logger.error(f"URL: {url}")
+                raise Exception(error_msg)
+            
+            export_status = response.json()
+            logger.info(f"Export status: {export_status.get('status', 'Unknown')}")
+            return export_status
+    
+    async def get_export_file(
+        self,
+        user_access_token: str,
+        export_id: str,
+        report_id: Optional[str] = None,
+        workspace_id: Optional[str] = None
+    ) -> bytes:
+        """
+        Download the exported PDF file.
+        
+        Args:
+            user_access_token: The user's access token from the frontend
+            export_id: Export operation ID
+            report_id: Optional specific report ID (overrides instance default)
+            workspace_id: Optional specific workspace ID (overrides instance default)
+        
+        Returns:
+            PDF file bytes
+        
+        Raises:
+            Exception: If download fails
+        """
+        target_report_id = report_id or self.report_id
+        target_workspace_id = workspace_id or self.workspace_id
+        
+        powerbi_access_token = await self._get_access_token(user_access_token)
+        
+        url = f"{self.POWER_BI_API_BASE}/groups/{target_workspace_id}/reports/{target_report_id}/exports/{export_id}/file"
+        
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.get(
+                url,
+                headers={"Authorization": f"Bearer {powerbi_access_token}"}
+            )
+            
+            if response.status_code != 200:
+                error_msg = f"Failed to download export file: {response.status_code}"
+                logger.error(error_msg)
+                raise Exception(error_msg)
+            
+            return response.content
+    
+    def get_report_web_url(
+        self,
+        report_id: Optional[str] = None,
+        workspace_id: Optional[str] = None
+    ) -> str:
+        """
+        Get the Power BI web URL for opening the report in a new tab.
+        
+        Args:
+            report_id: Optional specific report ID (overrides instance default)
+            workspace_id: Optional specific workspace ID (overrides instance default)
+        
+        Returns:
+            Power BI web URL
+        """
+        target_report_id = report_id or self.report_id
+        target_workspace_id = workspace_id or self.workspace_id
+        
+        return f"https://app.powerbi.com/groups/{target_workspace_id}/reports/{target_report_id}"

@@ -5,7 +5,17 @@ import {
   CircularProgress,
   Alert,
   Button,
+  IconButton,
+  Menu,
+  MenuItem,
+  ListItemIcon,
+  ListItemText,
+  Snackbar,
 } from '@mui/material';
+import MoreVertIcon from '@mui/icons-material/MoreVert';
+import RefreshIcon from '@mui/icons-material/Refresh';
+import DownloadIcon from '@mui/icons-material/Download';
+import OpenInNewIcon from '@mui/icons-material/OpenInNew';
 import { PowerBIEmbed } from 'powerbi-client-react';
 import { models } from 'powerbi-client';
 import apiClient from '../services/apiClient';
@@ -31,9 +41,150 @@ const PowerBIReportsPage: React.FC<PowerBIReportsPageProps> = ({ uiConfig }) => 
   const [loading, setLoading] = useState<boolean>(true);
   const [error, setError] = useState<string | null>(null);
   const [currentReport, setCurrentReport] = useState<PowerBIReportChild | null>(null);
+  const [anchorEl, setAnchorEl] = useState<null | HTMLElement>(null);
+  const [downloading, setDownloading] = useState<boolean>(false);
+  const [snackbarOpen, setSnackbarOpen] = useState<boolean>(false);
+  const [snackbarMessage, setSnackbarMessage] = useState<string>('');
+  const [embeddedReport, setEmbeddedReport] = useState<any>(null);
 
   const powerbiReportsTab = getTabConfig(uiConfig, 'powerbi-reports');
   const reports = powerbiReportsTab?.children || [];
+
+  const handleMenuOpen = (event: React.MouseEvent<HTMLElement>) => {
+    setAnchorEl(event.currentTarget);
+  };
+
+  const handleMenuClose = () => {
+    setAnchorEl(null);
+  };
+
+  const handleDownloadPDF = async () => {
+    handleMenuClose();
+    if (!currentReport) return;
+
+    try {
+      setDownloading(true);
+      setSnackbarMessage('Starting PDF export...');
+      setSnackbarOpen(true);
+
+      // Initiate export
+      const exportResponse = await apiClient.post<{ id: string; status: string }>(
+        `/api/powerbi/export-pdf?reportId=${currentReport.reportId}&workspaceId=${currentReport.workspaceId}`
+      );
+      
+      const exportId = exportResponse.data.id;
+      console.log('Export initiated with ID:', exportId);
+      
+      setSnackbarMessage('Export in progress... This may take a minute.');
+      
+      // Poll for completion
+      let attempts = 0;
+      const maxAttempts = 60; // 60 seconds max (Power BI exports can take time)
+      
+      while (attempts < maxAttempts) {
+        await new Promise(resolve => setTimeout(resolve, 2000)); // Wait 2 seconds between polls
+        
+        try {
+          const statusResponse = await apiClient.get<{ status: string; percentComplete?: number }>(
+            `/api/powerbi/export-status/${exportId}?reportId=${currentReport.reportId}&workspaceId=${currentReport.workspaceId}`
+          );
+          
+          console.log('Export status:', statusResponse.data);
+          
+          const exportStatus = statusResponse.data.status;
+          const percentComplete = statusResponse.data.percentComplete;
+          
+          if (percentComplete !== undefined) {
+            setSnackbarMessage(`Exporting PDF... ${percentComplete}%`);
+          }
+          
+          if (exportStatus === 'Succeeded') {
+            // Download the file
+            setSnackbarMessage('Downloading PDF...');
+            
+            const fileResponse = await apiClient.get(
+              `/api/powerbi/export-file/${exportId}?reportId=${currentReport.reportId}&workspaceId=${currentReport.workspaceId}`,
+              { responseType: 'blob' }
+            );
+            
+            // Create blob link to download
+            const blob = new Blob([fileResponse.data], { type: 'application/pdf' });
+            const url = window.URL.createObjectURL(blob);
+            const link = document.createElement('a');
+            link.href = url;
+            link.download = `${currentReport.labels.name}.pdf`;
+            document.body.appendChild(link);
+            link.click();
+            document.body.removeChild(link);
+            window.URL.revokeObjectURL(url);
+            
+            setSnackbarMessage('PDF downloaded successfully!');
+            setDownloading(false);
+            setTimeout(() => setSnackbarOpen(false), 3000);
+            return;
+          } else if (exportStatus === 'Failed') {
+            throw new Error('Export failed on Power BI service');
+          }
+        } catch (pollError: any) {
+          console.error('Error polling export status:', pollError);
+          // If it's the last attempt, throw the error
+          if (attempts >= maxAttempts - 1) {
+            throw pollError;
+          }
+          // Otherwise, continue polling
+        }
+        
+        attempts++;
+      }
+      
+      throw new Error('Export timeout');
+      
+    } catch (err: any) {
+      console.error('Failed to download PDF:', err);
+      const errorMessage = err.response?.data?.detail || err.message || 'Failed to download PDF';
+      setSnackbarMessage(`Error: ${errorMessage}`);
+      setDownloading(false);
+      
+      // Keep snackbar open longer for errors
+      setTimeout(() => setSnackbarOpen(false), 8000);
+    }
+  };
+
+  const handleOpenInPowerBI = async () => {
+    handleMenuClose();
+    if (!currentReport) return;
+
+    try {
+      const response = await apiClient.get<{ webUrl: string }>(
+        `/api/powerbi/web-url?reportId=${currentReport.reportId}&workspaceId=${currentReport.workspaceId}`
+      );
+      
+      window.open(response.data.webUrl, '_blank');
+    } catch (err: any) {
+      console.error('Failed to get Power BI URL:', err);
+      setSnackbarMessage('Failed to open Power BI. Please try again.');
+      setSnackbarOpen(true);
+    }
+  };
+
+  const handleRefresh = async () => {
+    handleMenuClose();
+    if (!embeddedReport) return;
+
+    try {
+      setSnackbarMessage('Refreshing report data...');
+      setSnackbarOpen(true);
+      
+      await embeddedReport.reload();
+      
+      setSnackbarMessage('Report refreshed successfully!');
+      setTimeout(() => setSnackbarOpen(false), 3000);
+    } catch (error) {
+      console.error('Failed to refresh report:', error);
+      setSnackbarMessage('Failed to refresh report');
+      setTimeout(() => setSnackbarOpen(false), 3000);
+    }
+  };
 
   // Find the current report from the configuration
   useEffect(() => {
@@ -51,9 +202,11 @@ const PowerBIReportsPage: React.FC<PowerBIReportsPageProps> = ({ uiConfig }) => 
   }, [reportId, reports, navigate]);
 
   // Fetch embed configuration from backend
-  const fetchEmbedConfig = async (report: PowerBIReportChild) => {
+  const fetchEmbedConfig = async (report: PowerBIReportChild, isRefresh = false) => {
     try {
-      setLoading(true);
+      if (!isRefresh) {
+        setLoading(true);
+      }
       setError(null);
       
       // Call backend API with specific report and workspace IDs
@@ -63,6 +216,17 @@ const PowerBIReportsPage: React.FC<PowerBIReportsPageProps> = ({ uiConfig }) => 
       const config = response.data;
       
       setEmbedConfig(config);
+      
+      // If we have an embedded report instance and we're refreshing, update its access token
+      if (isRefresh && embeddedReport) {
+        try {
+          await embeddedReport.setAccessToken(config.embedToken);
+          console.log('Access token refreshed successfully');
+        } catch (err) {
+          console.error('Failed to update access token:', err);
+        }
+      }
+      
       setLoading(false);
     } catch (err: any) {
       console.error('Failed to load Power BI report:', err);
@@ -92,11 +256,11 @@ const PowerBIReportsPage: React.FC<PowerBIReportsPageProps> = ({ uiConfig }) => 
 
     const refreshTimer = setTimeout(() => {
       console.log('Refreshing Power BI embed token...');
-      fetchEmbedConfig(currentReport);
+      fetchEmbedConfig(currentReport, true);
     }, refreshTime);
 
     return () => clearTimeout(refreshTimer);
-  }, [embedConfig, currentReport]);
+  }, [embedConfig, currentReport, embeddedReport]);
 
   if (!powerbiReportsTab?.display) {
     return (
@@ -197,13 +361,54 @@ const PowerBIReportsPage: React.FC<PowerBIReportsPageProps> = ({ uiConfig }) => 
   return (
     <Box sx={{ height: '100vh', display: 'flex', flexDirection: 'column' }}>
       {/* Header */}
-      <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider' }}>
-        <Typography variant="h5" fontWeight={600}>
-          {currentReport.labels.title}
-        </Typography>
-        <Typography variant="body2" color="text.secondary">
-          {currentReport.labels.subtitle}
-        </Typography>
+      <Box sx={{ p: 2, borderBottom: 1, borderColor: 'divider', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+        <Box>
+          <Typography variant="h5" fontWeight={600}>
+            {currentReport.labels.title}
+          </Typography>
+          <Typography variant="body2" color="text.secondary">
+            {currentReport.labels.subtitle}
+          </Typography>
+        </Box>
+        <IconButton
+          onClick={handleMenuOpen}
+          disabled={downloading}
+          sx={{ ml: 2 }}
+        >
+          <MoreVertIcon />
+        </IconButton>
+        <Menu
+          anchorEl={anchorEl}
+          open={Boolean(anchorEl)}
+          onClose={handleMenuClose}
+          anchorOrigin={{
+            vertical: 'bottom',
+            horizontal: 'right',
+          }}
+          transformOrigin={{
+            vertical: 'top',
+            horizontal: 'right',
+          }}
+        >
+          <MenuItem onClick={handleRefresh}>
+            <ListItemIcon>
+              <RefreshIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>Refresh</ListItemText>
+          </MenuItem>
+          <MenuItem onClick={handleDownloadPDF} disabled={downloading}>
+            <ListItemIcon>
+              <DownloadIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>Download as PDF</ListItemText>
+          </MenuItem>
+          <MenuItem onClick={handleOpenInPowerBI}>
+            <ListItemIcon>
+              <OpenInNewIcon fontSize="small" />
+            </ListItemIcon>
+            <ListItemText>Open in Power BI</ListItemText>
+          </MenuItem>
+        </Menu>
       </Box>
 
       {/* Power BI Embed */}
@@ -211,19 +416,44 @@ const PowerBIReportsPage: React.FC<PowerBIReportsPageProps> = ({ uiConfig }) => 
         <PowerBIEmbed
           embedConfig={powerBIConfig}
           eventHandlers={new Map([
-            ['loaded', () => console.log('Report loaded')],
+            ['loaded', () => {
+              console.log('Report loaded');
+              setError(null);
+            }],
             ['rendered', () => console.log('Report rendered')],
-            ['error', (event?: any) => {
-              console.error('Power BI error:', event?.detail);
-              setError('An error occurred while rendering the report');
+            ['error', async (event?: any) => {
+              const errorDetail = event?.detail;
+              console.error('Power BI error:', errorDetail);
+              
+              // Check if error is related to token expiration
+              if (errorDetail?.message?.includes('TokenExpired') || 
+                  errorDetail?.message?.includes('InvalidAccessToken') ||
+                  errorDetail?.errorCode === 'TokenExpired') {
+                console.log('Token expired, attempting to refresh...');
+                if (currentReport) {
+                  await fetchEmbedConfig(currentReport, true);
+                }
+              } else {
+                setError('An error occurred while rendering the report. Please try refreshing.');
+              }
             }],
           ])}
           cssClassName="powerbi-embed-container"
-          getEmbeddedComponent={(embeddedReport) => {
-            console.log('Embedded report component:', embeddedReport);
+          getEmbeddedComponent={(report) => {
+            console.log('Embedded report component:', report);
+            setEmbeddedReport(report);
           }}
         />
       </Box>
+
+      {/* Snackbar for notifications */}
+      <Snackbar
+        open={snackbarOpen}
+        autoHideDuration={downloading ? null : 4000}
+        onClose={() => !downloading && setSnackbarOpen(false)}
+        message={snackbarMessage}
+        anchorOrigin={{ vertical: 'bottom', horizontal: 'center' }}
+      />
 
       <style>
         {`
