@@ -3,6 +3,8 @@
  * Fetches and caches UI configuration from backend
  */
 
+import apiClient from './apiClient';
+
 export interface TabLabels {
   name: string;
   title: string;
@@ -177,10 +179,9 @@ async function validateCacheVersion(cachedVersion: string): Promise<void> {
   }
 
   try {
-    const response = await fetch('/api/config/ui');
-    const data = await response.json();
-    if (data.version !== cachedVersion) {
-      console.log(`UI config version changed: ${cachedVersion} → ${data.version}. Reloading...`);
+    const response = await apiClient.get<UIConfigResponse>('/api/config/ui');
+    if (response.data.version !== cachedVersion) {
+      console.log(`UI config version changed: ${cachedVersion} → ${response.data.version}. Reloading...`);
       sessionStorage.removeItem(VERSION_VALIDATED_KEY);
       clearUIConfigCache();
       // Force page reload to get fresh config
@@ -198,40 +199,12 @@ async function validateCacheVersion(cachedVersion: string): Promise<void> {
  * Fetch UI configuration from backend
  */
 export async function getUIConfig(): Promise<UIConfig> {
-  // Try to get from session storage first
-  const storedConfig = getCachedConfigFromStorage();
-  if (storedConfig) {
-    // Validate cache by checking version with backend in background
-    validateCacheVersion(storedConfig.version);
-    
-    // Return cached config (if version changed, page will reload)
-    if (!cachedConfig) {
-      cachedConfig = storedConfig;
-    }
-    return cachedConfig;
-  }
-
-  // Return in-memory cached config if available
-  if (cachedConfig) {
-    return cachedConfig;
-  }
-
+  // For security: Always validate access before returning cached config
+  // Try to fetch from backend - this will throw 403 if user has no permissions
   try {
-    const backendUrl = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8000';
-    const response = await fetch(`${backendUrl}/api/config/ui`);
+    const response = await apiClient.get<UIConfigResponse>('/api/config/ui');
     
-    if (!response.ok) {
-      console.warn('Failed to fetch UI config, using defaults');
-      cachedConfig = {
-        version: '1.0.0',
-        environment: 'prod',
-        tabs: tabsToMap(defaultTabConfigs),
-      };
-      saveCachedConfigToStorage(cachedConfig);
-      return cachedConfig;
-    }
-
-    const data: UIConfigResponse = await response.json();
+    const data: UIConfigResponse = response.data;
     cachedConfig = {
       version: data.version,
       environment: data.environment,
@@ -239,14 +212,35 @@ export async function getUIConfig(): Promise<UIConfig> {
     };
     saveCachedConfigToStorage(cachedConfig);
     return cachedConfig;
-  } catch (error) {
+  } catch (error: any) {
     console.error('Error fetching UI config:', error);
+    
+    // If it's a 403 or 401, don't use fallback or cache - throw the error
+    // This indicates the user doesn't have permission to access the app
+    if (error.response?.status === 403 || error.response?.status === 401) {
+      console.error('Access denied - no permissions to load UI config');
+      // Clear any cached config since user doesn't have access
+      clearUIConfigCache();
+      throw error; // Re-throw to let App.tsx handle it
+    }
+    
+    // For other errors (network issues, etc.), try to use cached config
+    const storedConfig = getCachedConfigFromStorage();
+    if (storedConfig) {
+      console.warn('Using cached config due to network error');
+      if (!cachedConfig) {
+        cachedConfig = storedConfig;
+      }
+      return cachedConfig;
+    }
+    
+    // If no cache available, use fallback config
+    console.warn('Using fallback config due to error');
     cachedConfig = {
       version: '1.0.0',
       environment: 'prod',
       tabs: tabsToMap(defaultTabConfigs),
     };
-    saveCachedConfigToStorage(cachedConfig);
     return cachedConfig;
   }
 }
@@ -268,7 +262,8 @@ export function getVisibleTabs(uiConfig: UIConfig): TabConfig[] {
 /**
  * Check if a tab should be displayed
  */
-export function shouldDisplayTab(uiConfig: UIConfig, tabId: string): boolean {
+export function shouldDisplayTab(uiConfig: UIConfig | null, tabId: string): boolean {
+  if (!uiConfig) return false;
   const tab = uiConfig.tabs.get(tabId);
   return tab ? tab.display : false;
 }
@@ -277,7 +272,9 @@ export function shouldDisplayTab(uiConfig: UIConfig, tabId: string): boolean {
  * Get the default route based on enabled tabs
  * Returns the first available enabled tab or settings as fallback
  */
-export function getDefaultRoute(uiConfig: UIConfig): string {
+export function getDefaultRoute(uiConfig: UIConfig | null): string {
+  if (!uiConfig) return '/login';
+  
   // Get the first visible tab from the config
   const visibleTabs = getVisibleTabs(uiConfig);
   

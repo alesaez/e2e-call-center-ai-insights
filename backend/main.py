@@ -2,13 +2,18 @@
 FastAPI backend with Microsoft Entra ID (Azure AD) authentication.
 Uses JWT token validation to secure API endpoints.
 """
-from fastapi import FastAPI, Depends, HTTPException, status, Request
+from fastapi import FastAPI, Depends, HTTPException, status, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from typing import Optional, Dict, List
 import httpx
 import logging
 from jose import jwt, JWTError
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+import time
+import hashlib
 
 # Configure Azure SDK logging to be less verbose
 logging.getLogger("azure.core.pipeline.policies.http_logging_policy").setLevel(logging.WARNING)
@@ -39,13 +44,29 @@ from ai_foundry_service import AIFoundryService
 from conversation_service import ConversationService
 from powerbi_service import PowerBIService
 from visualization_service import visualization_service
+from rbac_service import RBACService
+from rbac_models import (
+    Permission,
+    UserPermissions,
+    RoleDefinition,
+    CreateRoleRequest,
+    UpdateRoleRequest,
+    AssignRoleRequest
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
+# Initialize rate limiter
+limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])
+
 # Initialize FastAPI app
 app = FastAPI(title="Call Center AI Insights API")
+
+# Add rate limiter to app state
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # In-memory storage for query templates (replace with database in production)
 query_templates_db: Dict[str, QueryTemplate] = {}
@@ -59,6 +80,7 @@ copilot_studio_service: Optional[CopilotStudioService] = None
 ai_foundry_service: Optional[AIFoundryService] = None
 conversation_service: Optional[ConversationService] = None
 powerbi_service: Optional[PowerBIService] = None
+rbac_service: Optional[RBACService] = None
 
 # Cached settings
 @lru_cache()
@@ -119,6 +141,11 @@ async def startup_event():
     
     # Initialize conversation service (works with or without Cosmos)
     conversation_service = ConversationService(cosmos_service)
+    
+    # Initialize RBAC service
+    global rbac_service
+    rbac_service = RBACService(cosmos_service)
+    logger.info("✓ RBAC service initialized")
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -137,8 +164,63 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Security headers middleware
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    """Add security headers to all responses."""
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Strict-Transport-Security"] = "max-age=31536000; includeSubDomains"
+    response.headers["Content-Security-Policy"] = "default-src 'self'; frame-ancestors 'none';"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = "geolocation=(), microphone=(), camera=()"
+    return response
+
+# Audit logging middleware
+@app.middleware("http")
+async def audit_middleware(request: Request, call_next):
+    """Log all API requests for audit purposes."""
+    start_time = time.time()
+    
+    # Extract user info from token if present
+    auth_header = request.headers.get("authorization", "")
+    user_id = "anonymous"
+    user_email = "anonymous"
+    
+    if auth_header.startswith("Bearer "):
+        try:
+            token = auth_header.split(" ")[1]
+            payload = jwt.get_unverified_claims(token)
+            user_id = payload.get("oid", "unknown")
+            user_email = payload.get("preferred_username") or payload.get("email", "unknown")
+        except:
+            pass
+    
+    # Process request
+    response = await call_next(request)
+    
+    # Calculate duration
+    duration_ms = (time.time() - start_time) * 1000
+    
+    # Log the request
+    logger.info(
+        f"API_AUDIT: {request.method} {request.url.path} - "
+        f"User: {user_email} ({user_id}) - "
+        f"IP: {request.client.host if request.client else 'unknown'} - "
+        f"Status: {response.status_code} - "
+        f"Duration: {duration_ms:.2f}ms"
+    )
+    
+    return response
+
 # Cache for JWKS (JSON Web Key Set)
 _jwks_cache: Optional[Dict] = None
+
+# Token validation cache (to reduce JWT validation overhead)
+from cachetools import TTLCache
+_token_validation_cache = TTLCache(maxsize=1000, ttl=300)  # 5 minute TTL
 
 async def get_jwks() -> Dict:
     """
@@ -170,16 +252,24 @@ async def verify_token(
     credentials: HTTPAuthorizationCredentials = Depends(security)
 ) -> Dict:
     """
-    Verify JWT access token from Microsoft Entra ID.
+    Verify JWT access token from Microsoft Entra ID with caching.
     
     Steps:
-    1. Extract token from Authorization header
-    2. Fetch JWKS from Microsoft
-    3. Validate token signature and claims
-    4. Return decoded token payload
+    1. Check cache for previously validated token
+    2. Extract token from Authorization header
+    3. Fetch JWKS from Microsoft
+    4. Validate token signature and claims
+    5. Cache validation result
+    6. Return decoded token payload
     """
     token = credentials.credentials
     settings = get_settings()
+    
+    # Check cache first
+    token_hash = hashlib.sha256(token.encode()).hexdigest()
+    if token_hash in _token_validation_cache:
+        logger.debug("Token validation cache hit")
+        return _token_validation_cache[token_hash]
     
     try:
         # Get signing keys
@@ -240,6 +330,10 @@ async def verify_token(
                 issuer=expected_issuer
             )
         
+        # Cache the validated token
+        _token_validation_cache[token_hash] = payload
+        logger.debug("Token validated and cached")
+        
         return payload
         
     except JWTError as e:
@@ -255,6 +349,76 @@ async def verify_token(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Could not validate credentials"
         )
+
+# RBAC helper functions
+async def get_user_permissions(token_payload: Dict = Depends(verify_token)) -> UserPermissions:
+    """
+    Get user permissions from token payload.
+    This is a dependency that can be used in endpoints.
+    Raises 403 if user has no roles assigned.
+    """
+    if not rbac_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="RBAC service not initialized"
+        )
+    
+    user_permissions = await rbac_service.get_user_permissions(token_payload)
+    
+    # Debug logging
+    logger.info(f"DEBUG: User {user_permissions.user_email} has roles: {user_permissions.roles}")
+    
+    # Check if user has any VALID APP ROLES (not just OAuth scopes like 'access_as_user')
+    valid_app_roles = {"Administrator", "Contributor", "Reader"}
+    user_app_roles = set(user_permissions.roles) & valid_app_roles
+    
+    if not user_app_roles:
+        logger.warning(f"Access denied for user {user_permissions.user_email}: No valid app roles assigned (has: {user_permissions.roles})")
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Access denied. You do not have any assigned roles. Please contact your administrator to request access."
+        )
+    
+    return user_permissions
+
+def require_permission(required_permission: Permission):
+    """
+    Dependency factory to require specific permission.
+    Usage: permissions: UserPermissions = Depends(require_permission(Permission.DASHBOARD_VIEW))
+    """
+    async def permission_checker(user_permissions: UserPermissions = Depends(get_user_permissions)):
+        if not rbac_service.has_permission(user_permissions, required_permission):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Insufficient permissions. Required: {required_permission.value}"
+            )
+        return user_permissions
+    return permission_checker
+
+def require_any_permission(required_permissions: List[Permission]):
+    """
+    Dependency factory to require any of the specified permissions.
+    """
+    async def permission_checker(user_permissions: UserPermissions = Depends(get_user_permissions)):
+        if not rbac_service.has_any_permission(user_permissions, required_permissions):
+            required = [p.value for p in required_permissions]
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Insufficient permissions. Required one of: {required}"
+            )
+        return user_permissions
+    return permission_checker
+
+def require_admin():
+    """Dependency to require administrator role."""
+    async def admin_checker(user_permissions: UserPermissions = Depends(get_user_permissions)):
+        if not user_permissions.is_administrator:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Administrator privileges required"
+            )
+        return user_permissions
+    return admin_checker
 
 # Health check endpoint (public)
 @app.get("/health")
@@ -279,19 +443,22 @@ async def health_check():
     return health_status
 
 @app.get("/api/config/ui")
-async def get_ui_config():
+async def get_ui_config(user_permissions: UserPermissions = Depends(get_user_permissions)):
     """
-    Public endpoint to get UI configuration.
+    Protected endpoint to get UI configuration.
     Returns tab configuration with environment-specific overrides applied.
+    Requires authentication and at least one app role (Reader, Contributor, or Administrator).
+    Users without any assigned role will receive 403 Forbidden.
     """
     return settings.ui_config.get_api_response()
 
 
 @app.get("/api/config/visualization-instructions")
-async def get_visualization_instructions():
+async def get_visualization_instructions(token_payload: Dict = Depends(verify_token)):
     """
-    Public endpoint to get agent instructions for generating visualizations.
+    Protected endpoint to get agent instructions for generating visualizations.
     Returns markdown-formatted instructions for agents.
+    Requires authentication.
     """
     from visualization_service import VisualizationService
     return {
@@ -347,10 +514,13 @@ async def get_user_profile(token_payload: Dict = Depends(verify_token)):
     }
 
 @app.get("/api/dashboard/kpis")
-async def get_dashboard_kpis(token_payload: Dict = Depends(verify_token)):
+async def get_dashboard_kpis(
+    user_permissions: UserPermissions = Depends(require_permission(Permission.DASHBOARD_VIEW))
+):
     """
     Get dashboard KPI data (protected endpoint).
     Returns mock data for demonstration.
+    Requires: DASHBOARD_VIEW permission
     """
     return {
         "totalCalls": 1543,
@@ -361,10 +531,13 @@ async def get_dashboard_kpis(token_payload: Dict = Depends(verify_token)):
     }
 
 @app.get("/api/dashboard/charts")
-async def get_dashboard_charts(token_payload: Dict = Depends(verify_token)):
+async def get_dashboard_charts(
+    user_permissions: UserPermissions = Depends(require_permission(Permission.DASHBOARD_VIEW))
+):
     """
     Get dashboard chart data (protected endpoint).
     Returns mock data for charts and visualizations.
+    Requires: DASHBOARD_VIEW permission
     """
     return {
         "callVolumeTrend": [
@@ -411,13 +584,14 @@ async def get_dashboard_charts(token_payload: Dict = Depends(verify_token)):
 @app.get("/api/powerbi/embed-config")
 async def get_powerbi_embed_config(
     request: Request,
-    token_payload: Dict = Depends(verify_token),
+    user_permissions: UserPermissions = Depends(require_permission(Permission.POWERBI_VIEW)),
     reportId: Optional[str] = None,
     workspaceId: Optional[str] = None
 ):
     """
     Get Power BI embed configuration including report ID, embed URL, and embed token.
     Uses On-Behalf-Of (OBO) flow to access Power BI with user's permissions.
+    Requires: POWERBI_VIEW permission
     
     Args:
         reportId: Optional specific report ID (overrides default from settings)
@@ -451,7 +625,7 @@ async def get_powerbi_embed_config(
         
         user_access_token = auth_header[7:]  # Remove "Bearer " prefix
         
-        logger.info(f"Generating Power BI embed config for user: {token_payload.get('preferred_username', 'unknown')}")
+        logger.info(f"Generating Power BI embed config for user: {user_permissions.user_email}")
         
         # Get complete embed configuration using OBO flow
         # Use provided reportId and workspaceId if available, otherwise use defaults
@@ -472,15 +646,17 @@ async def get_powerbi_embed_config(
         )
 
 @app.post("/api/powerbi/export-pdf")
+@limiter.limit("10/minute")  # Rate limit: 10 PDF exports per minute
 async def export_powerbi_report_to_pdf(
     request: Request,
-    token_payload: Dict = Depends(verify_token),
+    user_permissions: UserPermissions = Depends(require_permission(Permission.POWERBI_EXPORT)),
     reportId: Optional[str] = None,
     workspaceId: Optional[str] = None
 ):
     """
     Initiate PDF export for a Power BI report.
     Returns an export ID that can be used to check status and download the file.
+    Requires: POWERBI_EXPORT permission
     
     Args:
         reportId: Optional specific report ID (overrides default from settings)
@@ -510,7 +686,7 @@ async def export_powerbi_report_to_pdf(
         
         user_access_token = auth_header[7:]
         
-        logger.info(f"Initiating PDF export for user: {token_payload.get('preferred_username', 'unknown')}")
+        logger.info(f"Initiating PDF export for user: {user_permissions.user_email}")
         
         export_data = await powerbi_service.export_report_to_pdf(
             user_access_token,
@@ -531,12 +707,13 @@ async def export_powerbi_report_to_pdf(
 async def get_powerbi_export_status(
     export_id: str,
     request: Request,
-    token_payload: Dict = Depends(verify_token),
+    user_permissions: UserPermissions = Depends(require_permission(Permission.POWERBI_EXPORT)),
     reportId: Optional[str] = None,
     workspaceId: Optional[str] = None
 ):
     """
     Get the status of a Power BI export operation.
+    Requires: POWERBI_EXPORT permission
     
     Args:
         export_id: Export operation ID from the export-pdf endpoint
@@ -589,12 +766,13 @@ async def get_powerbi_export_status(
 async def download_powerbi_export_file(
     export_id: str,
     request: Request,
-    token_payload: Dict = Depends(verify_token),
+    user_permissions: UserPermissions = Depends(require_permission(Permission.POWERBI_EXPORT)),
     reportId: Optional[str] = None,
     workspaceId: Optional[str] = None
 ):
     """
     Download the exported PDF file.
+    Requires: POWERBI_EXPORT permission
     
     Args:
         export_id: Export operation ID
@@ -648,12 +826,13 @@ async def download_powerbi_export_file(
 
 @app.get("/api/powerbi/web-url")
 async def get_powerbi_web_url(
-    token_payload: Dict = Depends(verify_token),
+    user_permissions: UserPermissions = Depends(require_permission(Permission.POWERBI_VIEW)),
     reportId: Optional[str] = None,
     workspaceId: Optional[str] = None
 ):
     """
     Get the Power BI web URL for opening the report in a browser.
+    Requires: POWERBI_VIEW permission
     
     Args:
         reportId: Optional specific report ID
@@ -685,11 +864,12 @@ async def get_powerbi_web_url(
 @app.post("/api/copilot-studio/token")
 async def get_copilot_studio_token(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    token_payload: Dict = Depends(verify_token)
+    user_permissions: UserPermissions = Depends(require_permission(Permission.CHAT_VIEW))
 ):
     """
     Create a Copilot Studio session.
     Uses On-Behalf-Of flow to impersonate the current user.
+    Requires: CHAT_VIEW permission
     """
     if not copilot_studio_service:
         raise HTTPException(
@@ -697,9 +877,9 @@ async def get_copilot_studio_token(
             detail="Copilot Studio is not configured. Please set COPILOT_STUDIO environment variables."
         )
     
-    # Get user information from JWT token
-    user_id = token_payload.get("sub") or token_payload.get("oid") or "user"
-    user_name = token_payload.get("name", "User")
+    # Get user information from UserPermissions
+    user_id = user_permissions.user_id
+    user_name = user_permissions.user_email.split('@')[0] if user_permissions.user_email else "User"
     user_token = credentials.credentials
     
     try:
@@ -718,14 +898,17 @@ async def get_copilot_studio_token(
         )
 
 @app.post("/api/copilot-studio/send-message")
+@limiter.limit("30/minute")  # Rate limit: 30 messages per minute
 async def send_message_to_copilot(
+    request: Request,
     message_data: Dict,
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    token_payload: Dict = Depends(verify_token)
+    user_permissions: UserPermissions = Depends(require_permission(Permission.CHAT_CREATE))
 ):
     """
     Send a message to Copilot Studio and receive a response.
     Uses On-Behalf-Of flow to impersonate the current user.
+    Requires: CHAT_CREATE permission
     """
     if not copilot_studio_service:
         raise HTTPException(
@@ -766,11 +949,12 @@ async def send_message_to_copilot(
 async def send_card_response_to_copilot(
     message_data: Dict,
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    token_payload: Dict = Depends(verify_token)
+    user_permissions: UserPermissions = Depends(require_permission(Permission.CHAT_CREATE))
 ):
     """
     Send an Adaptive Card response (InvokeResponse activity) to Copilot Studio.
     This handles card submit actions like Allow/Cancel buttons.
+    Requires: CHAT_CREATE permission
     """
     if not copilot_studio_service:
         raise HTTPException(
@@ -814,11 +998,12 @@ async def send_card_response_to_copilot(
 @app.post("/api/ai-foundry/token")
 async def get_ai_foundry_token(
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    token_payload: Dict = Depends(verify_token)
+    user_permissions: UserPermissions = Depends(require_permission(Permission.AI_FOUNDRY_QUERY))
 ):
     """
     Initialize a new Azure AI Foundry conversation session.
     Returns the thread ID and welcome message.
+    Requires: AI_FOUNDRY_QUERY permission
     """
     if not ai_foundry_service:
         raise HTTPException(
@@ -827,8 +1012,8 @@ async def get_ai_foundry_token(
         )
     
     user_token = credentials.credentials
-    user_id = token_payload.get("sub") or token_payload.get("oid")
-    user_name = token_payload.get("name", "User")
+    user_id = user_permissions.user_id
+    user_name = user_permissions.user_email.split('@')[0] if user_permissions.user_email else "User"
     
     try:
         session_data = await ai_foundry_service.start_conversation(
@@ -846,13 +1031,16 @@ async def get_ai_foundry_token(
         )
 
 @app.post("/api/ai-foundry/send-message")
+@limiter.limit("30/minute")  # Rate limit: 30 messages per minute
 async def send_message_to_ai_foundry(
+    request: Request,
     message_data: Dict,
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    token_payload: Dict = Depends(verify_token)
+    user_permissions: UserPermissions = Depends(require_permission(Permission.AI_FOUNDRY_QUERY))
 ):
     """
     Send a message to Azure AI Foundry and receive a response.
+    Requires: AI_FOUNDRY_QUERY permission
     """
     if not ai_foundry_service:
         raise HTTPException(
@@ -898,11 +1086,12 @@ async def send_message_to_ai_foundry(
 async def send_card_response_to_ai_foundry(
     message_data: Dict,
     credentials: HTTPAuthorizationCredentials = Depends(security),
-    token_payload: Dict = Depends(verify_token)
+    user_permissions: UserPermissions = Depends(require_permission(Permission.AI_FOUNDRY_QUERY))
 ):
     """
     Send an Adaptive Card response to Azure AI Foundry.
     This handles card submit actions like Allow/Cancel buttons.
+    Requires: AI_FOUNDRY_QUERY permission
     """
     if not ai_foundry_service:
         raise HTTPException(
@@ -946,11 +1135,12 @@ async def send_card_response_to_ai_foundry(
 async def get_user_conversations(
     limit: int = 50,
     agent_id: Optional[str] = None,
-    token_payload: Dict = Depends(verify_token)
+    user_permissions: UserPermissions = Depends(require_permission(Permission.CHAT_VIEW))
 ):
     """
     Get conversation history for the authenticated user.
     Returns a list of conversation summaries.
+    Requires: CHAT_VIEW permission
     """
     if not conversation_service:
         raise HTTPException(
@@ -958,7 +1148,7 @@ async def get_user_conversations(
             detail="Chat history service is not available."
         )
     
-    user_id = token_payload.get("sub") or token_payload.get("oid")
+    user_id = user_permissions.user_id
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -982,10 +1172,11 @@ async def get_user_conversations(
 @app.post("/api/chat/conversations", response_model=ChatConversation, status_code=status.HTTP_201_CREATED)
 async def create_conversation(
     request: CreateConversationRequest,
-    token_payload: Dict = Depends(verify_token)
+    user_permissions: UserPermissions = Depends(require_permission(Permission.CHAT_CREATE))
 ):
     """
     Create a new chat conversation.
+    Requires: CHAT_CREATE permission
     """
     if not conversation_service:
         raise HTTPException(
@@ -993,8 +1184,8 @@ async def create_conversation(
             detail="Chat history service is not available."
         )
     
-    user_id = token_payload.get("sub") or token_payload.get("oid")
-    user_name = token_payload.get("name", "User")
+    user_id = user_permissions.user_id
+    user_name = user_permissions.user_email.split('@')[0] if user_permissions.user_email else "User"
     
     if not user_id:
         raise HTTPException(
@@ -1026,10 +1217,11 @@ async def create_conversation(
 @app.get("/api/chat/conversations/{conversation_id}", response_model=ChatConversation)
 async def get_conversation(
     conversation_id: str,
-    token_payload: Dict = Depends(verify_token)
+    user_permissions: UserPermissions = Depends(require_permission(Permission.CHAT_VIEW))
 ):
     """
     Get a specific conversation with full message history.
+    Requires: CHAT_VIEW permission
     """
     if not conversation_service:
         raise HTTPException(
@@ -1037,7 +1229,7 @@ async def get_conversation(
             detail="Chat history service is not available."
         )
     
-    user_id = token_payload.get("sub") or token_payload.get("oid")
+    user_id = user_permissions.user_id
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1065,10 +1257,11 @@ async def get_conversation(
 @app.get("/api/chat/conversations/{conversation_id}/messages", response_model=List[ChatMessage])
 async def get_messages(
     conversation_id: str,
-    token_payload: Dict = Depends(verify_token)
+    user_permissions: UserPermissions = Depends(require_permission(Permission.CHAT_VIEW))
 ):
     """
     Get all messages for a specific conversation/session.
+    Requires: CHAT_VIEW permission
     """
     if not conversation_service:
         raise HTTPException(
@@ -1076,7 +1269,7 @@ async def get_messages(
             detail="Chat history service is not available."
         )
     
-    user_id = token_payload.get("sub") or token_payload.get("oid")
+    user_id = user_permissions.user_id
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1097,10 +1290,11 @@ async def get_messages(
 async def add_message(
     conversation_id: str,
     message: ChatMessage,
-    token_payload: Dict = Depends(verify_token)
+    user_permissions: UserPermissions = Depends(require_permission(Permission.CHAT_CREATE))
 ):
     """
     Add a message to an existing conversation.
+    Requires: CHAT_CREATE permission
     """
     if not conversation_service:
         raise HTTPException(
@@ -1108,7 +1302,7 @@ async def add_message(
             detail="Chat history service is not available."
         )
     
-    user_id = token_payload.get("sub") or token_payload.get("oid")
+    user_id = user_permissions.user_id
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1149,10 +1343,11 @@ async def add_message(
 @app.delete("/api/chat/conversations/{conversation_id}")
 async def delete_conversation(
     conversation_id: str,
-    token_payload: Dict = Depends(verify_token)
+    user_permissions: UserPermissions = Depends(require_permission(Permission.CHAT_DELETE))
 ):
     """
     Delete (soft delete) a conversation.
+    Requires: CHAT_DELETE permission
     """
     if not conversation_service:
         raise HTTPException(
@@ -1160,7 +1355,7 @@ async def delete_conversation(
             detail="Chat history service is not available."
         )
     
-    user_id = token_payload.get("sub") or token_payload.get("oid")
+    user_id = user_permissions.user_id
     if not user_id:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -1193,13 +1388,14 @@ async def delete_conversation(
 @app.get("/api/query-templates", response_model=QueryTemplateList)
 async def list_query_templates(
     category: Optional[str] = None,
-    token_payload: Dict = Depends(verify_token)
+    user_permissions: UserPermissions = Depends(require_permission(Permission.TEMPLATES_VIEW))
 ):
     """
     List all query templates (protected endpoint).
     Optionally filter by category.
+    Requires: TEMPLATES_VIEW permission
     """
-    user_id = token_payload.get("sub") or token_payload.get("oid")
+    user_id = user_permissions.user_id
     
     templates = list(query_templates_db.values())
     
@@ -1221,12 +1417,13 @@ async def list_query_templates(
 @app.post("/api/query-templates", response_model=QueryTemplate, status_code=status.HTTP_201_CREATED)
 async def create_query_template(
     template_data: QueryTemplateCreate,
-    token_payload: Dict = Depends(verify_token)
+    user_permissions: UserPermissions = Depends(require_permission(Permission.TEMPLATES_CREATE))
 ):
     """
     Create a new query template (protected endpoint).
+    Requires: TEMPLATES_CREATE permission
     """
-    user_id = token_payload.get("sub") or token_payload.get("oid")
+    user_id = user_permissions.user_id
     
     # Generate unique ID
     template_id = str(uuid.uuid4())
@@ -1254,10 +1451,11 @@ async def create_query_template(
 @app.get("/api/query-templates/{template_id}", response_model=QueryTemplate)
 async def get_query_template(
     template_id: str,
-    token_payload: Dict = Depends(verify_token)
+    user_permissions: UserPermissions = Depends(require_permission(Permission.TEMPLATES_VIEW))
 ):
     """
     Get a specific query template by ID (protected endpoint).
+    Requires: TEMPLATES_VIEW permission
     """
     if template_id not in query_templates_db:
         raise HTTPException(
@@ -1271,10 +1469,11 @@ async def get_query_template(
 async def update_query_template(
     template_id: str,
     template_update: QueryTemplateUpdate,
-    token_payload: Dict = Depends(verify_token)
+    user_permissions: UserPermissions = Depends(require_permission(Permission.TEMPLATES_UPDATE))
 ):
     """
     Update an existing query template (protected endpoint).
+    Requires: TEMPLATES_UPDATE permission
     """
     if template_id not in query_templates_db:
         raise HTTPException(
@@ -1283,7 +1482,7 @@ async def update_query_template(
         )
     
     template = query_templates_db[template_id]
-    user_id = token_payload.get("sub") or token_payload.get("oid")
+    user_id = user_permissions.user_id
     
     # Check ownership (only owner can update)
     if template.user_id and template.user_id != user_id:
@@ -1307,10 +1506,11 @@ async def update_query_template(
 @app.delete("/api/query-templates/{template_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_query_template(
     template_id: str,
-    token_payload: Dict = Depends(verify_token)
+    user_permissions: UserPermissions = Depends(require_permission(Permission.TEMPLATES_DELETE))
 ):
     """
     Delete a query template (protected endpoint).
+    Requires: TEMPLATES_DELETE permission
     """
     if template_id not in query_templates_db:
         raise HTTPException(
@@ -1319,7 +1519,7 @@ async def delete_query_template(
         )
     
     template = query_templates_db[template_id]
-    user_id = token_payload.get("sub") or token_payload.get("oid")
+    user_id = user_permissions.user_id
     
     # Check ownership (only owner can delete)
     if template.user_id and template.user_id != user_id:
@@ -1374,6 +1574,100 @@ def initialize_default_templates():
 
 # Initialize default templates on startup
 initialize_default_templates()
+
+# ============================================================================
+# RBAC Management Endpoints
+# ============================================================================
+
+@app.get("/api/rbac/permissions", response_model=UserPermissions)
+async def get_my_permissions(user_permissions: UserPermissions = Depends(get_user_permissions)):
+    """
+    Get current user's permissions.
+    """
+    return user_permissions
+
+@app.get("/api/rbac/roles", response_model=List[RoleDefinition])
+async def list_roles(
+    include_disabled: bool = False,
+    user_permissions: UserPermissions = Depends(require_permission(Permission.ADMIN_ROLES_VIEW))
+):
+    """
+    List all available roles (built-in and custom).
+    Requires ADMIN_ROLES_VIEW permission.
+    """
+    if not rbac_service:
+        raise HTTPException(status_code=503, detail="RBAC service not available")
+    
+    return await rbac_service.list_all_roles(include_disabled=include_disabled)
+
+@app.post("/api/rbac/roles", response_model=RoleDefinition, status_code=status.HTTP_201_CREATED)
+async def create_role(
+    request: CreateRoleRequest,
+    user_permissions: UserPermissions = Depends(require_permission(Permission.ADMIN_ROLES_MANAGE))
+):
+    """
+    Create a new custom role.
+    Requires ADMIN_ROLES_MANAGE permission.
+    """
+    if not rbac_service:
+        raise HTTPException(status_code=503, detail="RBAC service not available")
+    
+    return await rbac_service.create_custom_role(
+        request=request,
+        created_by=user_permissions.user_id
+    )
+
+@app.put("/api/rbac/roles/{role_id}", response_model=RoleDefinition)
+async def update_role(
+    role_id: str,
+    request: UpdateRoleRequest,
+    user_permissions: UserPermissions = Depends(require_permission(Permission.ADMIN_ROLES_MANAGE))
+):
+    """
+    Update a custom role.
+    Built-in roles cannot be updated.
+    Requires ADMIN_ROLES_MANAGE permission.
+    """
+    if not rbac_service:
+        raise HTTPException(status_code=503, detail="RBAC service not available")
+    
+    return await rbac_service.update_custom_role(
+        role_id=role_id,
+        request=request,
+        updated_by=user_permissions.user_id
+    )
+
+@app.delete("/api/rbac/roles/{role_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_role(
+    role_id: str,
+    user_permissions: UserPermissions = Depends(require_permission(Permission.ADMIN_ROLES_MANAGE))
+):
+    """
+    Delete a custom role.
+    Built-in roles cannot be deleted.
+    Requires ADMIN_ROLES_MANAGE permission.
+    """
+    if not rbac_service:
+        raise HTTPException(status_code=503, detail="RBAC service not available")
+    
+    await rbac_service.delete_custom_role(
+        role_id=role_id,
+        deleted_by=user_permissions.user_id
+    )
+    return None
+
+@app.get("/api/rbac/permissions/available", response_model=List[Dict[str, str]])
+async def list_available_permissions(
+    user_permissions: UserPermissions = Depends(require_permission(Permission.ADMIN_ROLES_VIEW))
+):
+    """
+    List all available permissions that can be assigned to roles.
+    Requires ADMIN_ROLES_VIEW permission.
+    """
+    return [
+        {"value": perm.value, "name": perm.name}
+        for perm in Permission
+    ]
 
 if __name__ == "__main__":
     import uvicorn

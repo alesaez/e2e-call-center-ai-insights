@@ -44,3 +44,5 @@ htmlcov/
 
 # Docker
 .dockerignore
+AI-FOUNDRY-AGENT-INSTRUCTIONS.md
+FABRIC-DATA-AGENT-INSTRUCTIONS.md
