@@ -28,7 +28,9 @@
 param(
     # Deployment Mode Configuration
     [switch]$InfraOnly,  # If true, only deploy infrastructure (no code build/deploy)
-    [switch]$CodeOnly    # If true, only build and deploy code (skip infrastructure)
+    [switch]$CodeOnly,   # If true, only build and deploy code (skip infrastructure)
+    [switch]$Frontend,   # If true with CodeOnly, only deploy frontend
+    [switch]$Backend     # If true with CodeOnly, only deploy backend
 )
 
 # Load configuration from deploy-config.ps1
@@ -168,6 +170,21 @@ if ($InfraOnly -and $CodeOnly) {
     exit 1
 }
 
+if (($Frontend -or $Backend) -and -not $CodeOnly) {
+    Write-Host "Error: -Frontend and -Backend can only be used with -CodeOnly" -ForegroundColor Red
+    exit 1
+}
+
+# Determine what to deploy
+$deployBackend = $true
+$deployFrontend = $true
+
+if ($CodeOnly -and ($Frontend -or $Backend)) {
+    # If specific components are specified, only deploy those
+    $deployBackend = $Backend
+    $deployFrontend = $Frontend
+}
+
 Write-Host "=== Azure Container Apps Deployment with Private Endpoints ===" -ForegroundColor Cyan
 Write-Host ""
 
@@ -183,7 +200,13 @@ if ($InfraOnly) {
 elseif ($CodeOnly) {
     Write-Host "📦 Deployment Mode: Code Only" -ForegroundColor Yellow
     Write-Host "   - Will skip infrastructure provisioning" -ForegroundColor White
-    Write-Host "   - Will build images and deploy containers" -ForegroundColor White
+    if ($deployBackend -and $deployFrontend) {
+        Write-Host "   - Will build and deploy: Backend + Frontend" -ForegroundColor White
+    } elseif ($deployBackend) {
+        Write-Host "   - Will build and deploy: Backend only" -ForegroundColor Cyan
+    } elseif ($deployFrontend) {
+        Write-Host "   - Will build and deploy: Frontend only" -ForegroundColor Cyan
+    }
     Write-Host ""
 }
 else {
@@ -1057,10 +1080,12 @@ if (-not $InfraOnly) {
         --query "id" `
         --output tsv
     
-    # Build and push backend image
-    Write-Host ""
-    Write-Host "Building and pushing backend image..." -ForegroundColor Green
-    Push-Location backend
+    # Backend deployment
+    if ($deployBackend) {
+        # Build and push backend image
+        Write-Host ""
+        Write-Host "Building and pushing backend image..." -ForegroundColor Green
+        Push-Location backend
     az acr build `
         --registry $ContainerRegistry `
         --image "${BackendAppName}:${imageVersion}" `
@@ -1390,10 +1415,23 @@ if (-not $InfraOnly) {
     $backendUrl = "https://$backendUrl"
     Write-Host "Backend URL: $backendUrl" -ForegroundColor Cyan
 
-    # Build and push frontend image
-    Write-Host ""
-    Write-Host "Building and pushing frontend image..." -ForegroundColor Green
-    Push-Location frontend
+    } # End of backend deployment
+
+    # Frontend deployment
+    if ($deployFrontend) {
+        # Get backend URL for frontend configuration
+        $backendUrl = az containerapp show `
+            --name $BackendAppName `
+            --resource-group $ResourceGroup `
+            --query "properties.configuration.ingress.fqdn" `
+            --output tsv
+
+        $backendUrl = "https://$backendUrl"
+        
+        # Build and push frontend image
+        Write-Host ""
+        Write-Host "Building and pushing frontend image..." -ForegroundColor Green
+        Push-Location frontend
 
     $defaultEnvDomain = az containerapp env show `
         --resource-group $ResourceGroup `
@@ -1483,17 +1521,31 @@ if (-not $InfraOnly) {
     $frontendUrl = "https://$frontendUrl"
     Write-Host "Frontend URL: $frontendUrl" -ForegroundColor Cyan
 
-    # Configure backend CORS using Azure Container Apps native CORS support
-    Write-Host ""
-    Write-Host "Configuring backend CORS policy..." -ForegroundColor Green
-    az containerapp ingress cors enable `
-        --name $BackendAppName `
-        --resource-group $ResourceGroup `
-        --allowed-origins $frontendUrl `
-        --allowed-methods GET POST PUT DELETE OPTIONS `
-        --allowed-headers "*" `
-        --expose-headers "*" `
-        --max-age 3600
+    } # End of frontend deployment
+
+    # Configure CORS if both backend and frontend were deployed
+    if ($deployBackend -and $deployFrontend) {
+        # Get frontend URL for CORS configuration
+        $frontendUrl = az containerapp show `
+            --name $FrontendAppName `
+            --resource-group $ResourceGroup `
+            --query "properties.configuration.ingress.fqdn" `
+            --output tsv
+        
+        $frontendUrl = "https://$frontendUrl"
+        
+        # Configure backend CORS using Azure Container Apps native CORS support
+        Write-Host ""
+        Write-Host "Configuring backend CORS policy..." -ForegroundColor Green
+        az containerapp ingress cors enable `
+            --name $BackendAppName `
+            --resource-group $ResourceGroup `
+            --allowed-origins $frontendUrl `
+            --allowed-methods GET POST PUT DELETE OPTIONS `
+            --allowed-headers "*" `
+            --expose-headers "*" `
+            --max-age 3600
+    }
     
     Write-Host "   ✅ CORS configured to allow: $frontendUrl" -ForegroundColor Green
 
@@ -1552,8 +1604,24 @@ if (-not $CodeOnly) {
 }
 
 if (-not $InfraOnly) {
-    Write-Host "   - Frontend App: $frontendUrl 🌐 Public" -ForegroundColor Cyan
-    Write-Host "   - Backend API: $backendUrl 🔒 Internal (VNet only)" -ForegroundColor Cyan
+    if ($deployFrontend) {
+        $frontendUrl = az containerapp show `
+            --name $FrontendAppName `
+            --resource-group $ResourceGroup `
+            --query "properties.configuration.ingress.fqdn" `
+            --output tsv
+        $frontendUrl = "https://$frontendUrl"
+        Write-Host "   - Frontend App: $frontendUrl 🌐 Public" -ForegroundColor Cyan
+    }
+    if ($deployBackend) {
+        $backendUrl = az containerapp show `
+            --name $BackendAppName `
+            --resource-group $ResourceGroup `
+            --query "properties.configuration.ingress.fqdn" `
+            --output tsv
+        $backendUrl = "https://$backendUrl"
+        Write-Host "   - Backend API: $backendUrl 🔒 Internal (VNet only)" -ForegroundColor Cyan
+    }
 }
 
 if (-not $CodeOnly) {
