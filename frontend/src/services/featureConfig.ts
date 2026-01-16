@@ -167,35 +167,6 @@ function tabsToMap(tabs: TabConfig[]): Map<string, TabConfig> {
 }
 
 /**
- * Validate cached version against backend version
- * If versions differ, clear cache and reload
- * Only validates once per session to avoid infinite loops
- */
-async function validateCacheVersion(cachedVersion: string): Promise<void> {
-  // Check if we've already validated this session
-  const validatedVersion = sessionStorage.getItem(VERSION_VALIDATED_KEY);
-  if (validatedVersion === cachedVersion) {
-    return; // Already validated, skip
-  }
-
-  try {
-    const response = await apiClient.get<UIConfigResponse>('/api/config/ui');
-    if (response.data.version !== cachedVersion) {
-      console.log(`UI config version changed: ${cachedVersion} → ${response.data.version}. Reloading...`);
-      sessionStorage.removeItem(VERSION_VALIDATED_KEY);
-      clearUIConfigCache();
-      // Force page reload to get fresh config
-      window.location.reload();
-    } else {
-      // Mark this version as validated for this session
-      sessionStorage.setItem(VERSION_VALIDATED_KEY, cachedVersion);
-    }
-  } catch (error) {
-    console.warn('Failed to validate cache version:', error);
-  }
-}
-
-/**
  * Fetch UI configuration from backend
  */
 export async function getUIConfig(): Promise<UIConfig> {

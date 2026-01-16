@@ -253,7 +253,7 @@ const PowerBIReportPage: React.FC<PowerBIReportPageProps> = ({ uiConfig }) => {
         <Alert 
           severity="error"
           action={
-            <Button color="inherit" size="small" onClick={fetchEmbedConfig}>
+            <Button color="inherit" size="small" onClick={() => fetchEmbedConfig()}>
               Retry
             </Button>
           }

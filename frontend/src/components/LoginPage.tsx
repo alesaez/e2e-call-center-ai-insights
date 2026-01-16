@@ -1,11 +1,11 @@
 import { useMsal } from '@azure/msal-react';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { loginRequest } from '../authConfig';
 import { InteractionStatus } from '@azure/msal-browser';
 import { UIConfig, getDefaultRoute } from '../services/featureConfig';
 import { Box, Button, Typography, CircularProgress, useTheme } from '@mui/material';
-import { getLogoSrc, TenantConfig, loadTenantConfig } from '../config/tenantConfig';
+import { getLogoSrc, loadTenantConfig } from '../config/tenantConfig';
 
 interface LoginPageProps {
   uiConfig: UIConfig | null;
@@ -16,7 +16,7 @@ export default function LoginPage({ uiConfig }: LoginPageProps) {
   const navigate = useNavigate();
   const hasRedirected = useRef(false);
   const theme = useTheme();
-  const [tenantConfig, setTenantConfig] = useState<TenantConfig>(loadTenantConfig());
+  const tenantConfig = loadTenantConfig();
   const logoSrc = getLogoSrc(tenantConfig);
 
   useEffect(() => {

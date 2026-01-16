@@ -17,7 +17,6 @@ import { createAppTheme, getTenantConfig, TenantConfig, defaultTenantConfig } fr
 import { applyFavicon, updateDocumentTitle } from './config/tenantConfig';
 import { getUIConfig, UIConfig, shouldDisplayTab, getDefaultRoute } from './services/featureConfig';
 import { CircularProgress, Box, Button } from '@mui/material';
-import apiClient from './services/apiClient';
 
 function App() {
   const { accounts, inProgress, instance } = useMsal();
