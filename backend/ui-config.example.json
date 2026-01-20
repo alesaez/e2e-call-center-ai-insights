@@ -1,4 +1,5 @@
 {
+  "_comment": "Tab Icon Names: Supported values are Material-UI icon names. See https://mui.com/material-ui/material-icons/ for available icons. Currently supported: Dashboard, Chat, SmartToy, BarChart, Assessment, Settings",
   "version": "1.0.0",
   "defaultEnvironment": "prod",
   "environments": {
@@ -11,6 +12,7 @@
       "id": "dashboard",
       "display": true,
       "load": true,
+      "icon": "Dashboard",
       "labels": {
         "name": "Dashboard",
         "title": "Dashboard",
@@ -32,6 +34,7 @@
       "id": "copilot-studio",
       "display": true,
       "load": true,
+      "icon": "Chat",
       "labels": {
         "name": "Copilot Studio Chat",
         "title": "Copilot Studio",
@@ -83,6 +86,7 @@
       "id": "ai-foundry",
       "display": true,
       "load": true,
+      "icon": "SmartToy",
       "labels": {
         "name": "AI Foundry Chat",
         "title": "Azure AI Foundry",
@@ -134,6 +138,7 @@
       "id": "powerbi",
       "display": true,
       "load": true,
+      "icon": "BarChart",
       "labels": {
         "name": "Power BI Report",
         "title": "Analytics Dashboard",
@@ -154,6 +159,7 @@
       "id": "powerbi-reports",
       "display": true,
       "load": true,
+      "icon": "Assessment",
       "labels": {
         "name": "Power BI Reports",
         "title": "Power BI Reports",
@@ -200,6 +206,7 @@
       "id": "settings",
       "display": true,
       "load": false,
+      "icon": "Settings",
       "labels": {
         "name": "Settings",
         "title": "Configuration",

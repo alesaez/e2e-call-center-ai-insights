@@ -30,6 +30,7 @@ export interface TabConfig {
   id: string;
   display: boolean;
   load: boolean;
+  icon?: string;
   labels: TabLabels;
   children?: PowerBIReportChild[];
   predefinedQuestions?: PredefinedQuestion[];

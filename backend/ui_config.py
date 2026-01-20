@@ -52,6 +52,7 @@ class TabConfig(BaseModel):
     id: str
     display: bool = True
     load: bool = True
+    icon: Optional[str] = None
     labels: TabLabels
     children: Optional[List[PowerBIReportChild]] = None
     predefinedQuestions: Optional[List[PredefinedQuestion]] = None
@@ -238,6 +239,10 @@ class UIConfigManager:
                     "subtitle": tab.labels.subtitle
                 }
             }
+            
+            # Include icon if present
+            if tab.icon:
+                tab_dict["icon"] = tab.icon
             
             # Include children if present (for Power BI Reports)
             if tab.children:

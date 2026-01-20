@@ -256,7 +256,23 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
   };
 
   // Build menu items dynamically based on UI configuration order
-  const getIconForTab = (tabId: string) => {
+  const getIconForTab = (tabId: string, iconName?: string) => {
+    // Create icon map
+    const iconMap: Record<string, JSX.Element> = {
+      'Dashboard': <DashboardIcon />,
+      'Chat': <ChatIcon />,
+      'SmartToy': <SmartToyIcon />,
+      'BarChart': <BarChartIcon />,
+      'Assessment': <AssessmentIcon />,
+      'Settings': <SettingsIcon />,
+    };
+
+    // If iconName is provided from config, use it
+    if (iconName && iconMap[iconName]) {
+      return iconMap[iconName];
+    }
+
+    // Fallback to tabId-based logic (for backward compatibility)
     switch (tabId) {
       case 'dashboard':
         return <DashboardIcon />;
@@ -368,7 +384,7 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
                     }}
                   >
                     <ListItemIcon>
-                      <BarChartIcon />
+                      {getIconForTab(tab.id, tab.icon)}
                     </ListItemIcon>
                     <ListItemText primary={tab.labels.name} />
                     {powerbiReportsSubmenuOpen ? <ExpandLess /> : <ExpandMore />}
@@ -450,7 +466,7 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
                         color: location.pathname === '/chatbot' ? 'white' : 'inherit',
                       }}
                     >
-                      <ChatIcon />
+                      {getIconForTab(tab.id, tab.icon)}
                     </ListItemIcon>
                     <ListItemText primary={tab.labels.name} />
                     <IconButton
@@ -672,7 +688,7 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
                         color: location.pathname === '/ai-foundry' ? 'white' : 'inherit',
                       }}
                     >
-                      <ChatIcon />
+                      {getIconForTab(tab.id, tab.icon)}
                     </ListItemIcon>
                     <ListItemText primary={tab.labels.name} />
                     <IconButton
@@ -892,7 +908,7 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
                     color: location.pathname === getRouteForTab(tab.id, tab) ? 'white' : 'inherit',
                   }}
                 >
-                  {getIconForTab(tab.id)}
+                  {getIconForTab(tab.id, tab.icon)}
                 </ListItemIcon>
                 <ListItemText primary={tab.labels.name} />
               </ListItemButton>
