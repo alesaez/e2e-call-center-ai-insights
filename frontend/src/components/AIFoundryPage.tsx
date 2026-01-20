@@ -91,6 +91,7 @@ interface Message {
   sender: 'user' | 'bot';
   timestamp: Date;
   attachments?: MessageAttachment[];
+  suggestedQuestions?: string[]; // Follow-up questions suggested by the bot
 }
 
 interface MessageAttachment {
@@ -450,6 +451,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
   const [showQuestions, setShowQuestions] = useState(true);
+  const [activeSuggestions, setActiveSuggestions] = useState<string[]>([]);
   
   // Chat history state (managed by sidebar now, but we still need conversations for navigation handling)
 
@@ -753,15 +755,24 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
         text: textToSend,
       });
 
+      const botResponseText = response.data.response || response.data.text || 'I received your message.';
+      
+      // Use backend-generated suggestions if available, otherwise fallback to frontend logic
+      const followUpQuestions = response.data.suggestedQuestions?.length > 0 
+        ? response.data.suggestedQuestions 
+        : generateFollowUpQuestions(botResponseText, textToSend);
+
       const botResponse: Message = {
         id: (Date.now() + 1).toString(),
-        text: response.data.response || response.data.text || 'I received your message.',
+        text: botResponseText,
         sender: 'bot',
         timestamp: new Date(),
         attachments: response.data.attachments || [],
+        suggestedQuestions: followUpQuestions,
       };
       
       setMessages(prev => [...prev, botResponse]);
+      setActiveSuggestions(followUpQuestions); // Set active suggestions for display
       
       // Save bot response immediately
       if (conversationId) {
@@ -814,7 +825,56 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
   };
 
   const handleQuestionSelect = (question: string) => {
+    setActiveSuggestions([]); // Clear suggestions when one is selected
     sendMessage(question);
+  };
+
+  // Generate contextual follow-up questions based on bot response
+  const generateFollowUpQuestions = (botMessage: string, userMessage: string): string[] => {
+    const lowerBotMsg = botMessage.toLowerCase();
+    const lowerUserMsg = userMessage.toLowerCase();
+    
+    // Context-aware questions based on keywords
+    const questions: string[] = [];
+    
+    // Metrics-related follow-ups
+    if (lowerBotMsg.includes('call') || lowerBotMsg.includes('volume') || lowerUserMsg.includes('metric')) {
+      questions.push('What is the average call duration?');
+      questions.push('Show me the call trend for this month');
+    }
+    
+    // Agent performance follow-ups
+    if (lowerBotMsg.includes('agent') || lowerBotMsg.includes('performance') || lowerUserMsg.includes('agent')) {
+      questions.push('Who are the top performing agents?');
+      questions.push('What is the average customer satisfaction score?');
+    }
+    
+    // Customer satisfaction follow-ups
+    if (lowerBotMsg.includes('satisfaction') || lowerBotMsg.includes('csat') || lowerBotMsg.includes('rating')) {
+      questions.push('What are common customer complaints?');
+      questions.push('Show me satisfaction trends');
+    }
+    
+    // General analytical follow-ups
+    if (lowerBotMsg.includes('trend') || lowerBotMsg.includes('increase') || lowerBotMsg.includes('decrease')) {
+      questions.push('Can you break this down by time period?');
+      questions.push('What factors contributed to this change?');
+    }
+    
+    // Default follow-ups if no specific context
+    if (questions.length === 0) {
+      questions.push('Tell me more about this');
+      questions.push('What else should I know?');
+      questions.push('Can you provide more details?');
+    }
+    
+    // Always add a way to explore more
+    if (questions.length < 5) {
+      questions.push('Show me related insights');
+    }
+    
+    // Return 3-5 questions
+    return questions.slice(0, Math.min(5, questions.length));
   };
 
   // Chat History Functions
@@ -1256,6 +1316,46 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
                   </ListItem>
                 )}
                 
+                {/* Follow-up Suggestions - part of scrollable chat */}
+                {activeSuggestions.length > 0 && (
+                  <ListItem sx={{ flexDirection: 'column', alignItems: 'flex-end', px: 0, pb: 2 }}>
+                    <Box sx={{ display: 'flex', flexDirection: 'column', gap: 1, maxWidth: '70%', alignItems: 'flex-end' }}>
+                      {activeSuggestions.map((question, index) => (
+                        <Chip
+                          key={index}
+                          label={question}
+                          onClick={() => !sending && handleQuestionSelect(question)}
+                          disabled={sending}
+                          sx={{
+                            cursor: 'pointer',
+                            backgroundColor: 'background.paper',
+                            color: 'text.primary',
+                            border: 1,
+                            borderColor: theme.palette.primary.main,
+                            '&:hover': { 
+                              backgroundColor: theme.palette.primary.main,
+                              color: theme.palette.primary.contrastText,
+                            },
+                            '&.Mui-disabled': {
+                              opacity: 0.6,
+                            },
+                            fontSize: '0.875rem',
+                            height: 'auto',
+                            padding: '8px 12px',
+                            width: 'fit-content',
+                            maxWidth: '100%',
+                            '& .MuiChip-label': { 
+                              whiteSpace: 'normal',
+                              textAlign: 'right',
+                            },
+                          }}
+                          clickable
+                        />
+                      ))}
+                    </Box>
+                  </ListItem>
+                )}
+                
                 {/* Invisible element to scroll to */}
                 <div ref={messagesEndRef} />
               </List>
@@ -1275,7 +1375,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
 
             {/* Message Input */}
             <Box sx={{ p: 2, borderTop: 1, borderColor: 'divider' }}>
-              <Stack direction="row" spacing={1}>
+              <Stack direction="row" spacing={1} alignItems="center">
                 {messages.length > 1 && (
                   <Tooltip title={showQuestions ? "Hide quick questions" : "Show quick questions"}>
                     <IconButton
@@ -1283,8 +1383,6 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
                       disabled={sending}
                       sx={{ 
                         color: showQuestions ? 'primary.main' : 'action.active',
-                        alignSelf: 'flex-end',
-                        mb: 0.5,
                       }}
                     >
                       <QuestionIcon />
@@ -1305,7 +1403,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
                   variant="contained"
                   onClick={() => sendMessage()}
                   disabled={!inputText.trim() || sending}
-                  sx={{ minWidth: 60 }}
+                  sx={{ minWidth: 60, alignSelf: 'flex-end' }}
                 >
                   <SendIcon />
                 </Button>

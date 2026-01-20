@@ -27,6 +27,9 @@ azure-cosmos==4.7.0
 azure-ai-projects==1.0.0
 azure-ai-inference==1.0.0b9
 
+# Azure OpenAI for question generation
+openai==1.58.1
+
 # Microsoft Copilot Studio integration
 microsoft-agents-activity==0.6.1
 microsoft-agents-copilotstudio-client==0.6.1

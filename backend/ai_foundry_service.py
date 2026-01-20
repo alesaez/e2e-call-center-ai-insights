@@ -7,9 +7,11 @@ from typing import Dict, List, Optional, Any
 import msal
 from azure.core.credentials import AccessToken
 from azure.ai.projects import AIProjectClient
+from openai import AzureOpenAI
 from config import Settings
 import logging
 import asyncio
+import json
 
 logger = logging.getLogger(__name__)
 
@@ -244,6 +246,42 @@ class AIFoundryService:
             if self.visualization_service and response_text:
                 response_text = self.visualization_service.process_message_for_visualizations(response_text)
             
+            # Generate follow-up questions based on conversation history
+            suggested_questions = []
+            try:
+                # Build conversation history from recent messages
+                conversation_history = [
+                    {"role": "user", "content": message_text},
+                    {"role": "assistant", "content": response_text}
+                ]
+                
+                # Get recent messages for better context (optional, for richer suggestions)
+                try:
+                    recent_messages = await self.get_conversation_messages(
+                        conversation_id=conversation_id,
+                        user_token=user_token,
+                        limit=6
+                    )
+                    # Convert to simpler format and reverse (oldest first)
+                    for msg in reversed(recent_messages[2:]):  # Skip the two we just added
+                        if msg.get("content"):
+                            conversation_history.insert(0, {
+                                "role": msg["role"],
+                                "content": msg["content"][0].get("text", "") if msg["content"] else ""
+                            })
+                except Exception as e:
+                    logger.debug(f"Could not retrieve full conversation history: {e}")
+                
+                # Generate questions
+                suggested_questions = await self.generate_follow_up_questions(
+                    conversation_history=conversation_history,
+                    user_token=user_token,
+                    max_questions=5
+                )
+            except Exception as e:
+                logger.warning(f"Failed to generate follow-up questions: {e}")
+                # Continue without suggestions
+            
             return {
                 "success": True,
                 "response": response_text,
@@ -251,7 +289,8 @@ class AIFoundryService:
                 "attachments": attachments,
                 "conversationId": conversation_id,
                 "runId": run.id,
-                "runStatus": run.status
+                "runStatus": run.status,
+                "suggestedQuestions": suggested_questions  # Add AI-generated suggestions
             }
             
         except Exception as e:
@@ -297,6 +336,126 @@ class AIFoundryService:
         except Exception as e:
             logger.error(f"Failed to send card response to Azure AI Foundry: {e}")
             raise
+    
+    async def generate_follow_up_questions(
+        self,
+        conversation_history: List[Dict],
+        user_token: str,
+        max_questions: int = 5
+    ) -> List[str]:
+        """
+        Generate contextual follow-up questions using Azure OpenAI.
+        
+        Args:
+            conversation_history: Recent messages from the conversation (list of {role, content} dicts)
+            user_token: User's access token for OBO flow
+            max_questions: Maximum number of questions to generate (default: 5)
+            
+        Returns:
+            List of 3-5 suggested follow-up questions
+        """
+        try:
+            # Check if question suggestions are enabled
+            if not self.ai_foundry_settings.enable_question_suggestions:
+                logger.debug("Question suggestions disabled in configuration")
+                return []
+            
+            # Check if OpenAI endpoint is configured
+            if not self.ai_foundry_settings.openai_endpoint:
+                logger.debug("OpenAI endpoint not configured, skipping question generation")
+                return []
+            
+            # Get Azure AI token via OBO flow
+            azure_ai_token = self._get_azure_ai_token(user_token)
+            
+            # Create Azure OpenAI client
+            openai_client = AzureOpenAI(
+                azure_endpoint=self.ai_foundry_settings.openai_endpoint,
+                api_key=azure_ai_token,
+                api_version=self.ai_foundry_settings.openai_api_version
+            )
+            
+            # Prepare conversation history for the prompt (last 6 messages)
+            recent_messages = conversation_history[-6:] if len(conversation_history) > 6 else conversation_history
+            
+            # Build the system prompt for question generation
+            system_prompt = f"""You are a helpful assistant that suggests follow-up questions for a call center analytics chatbot.
+Based on the conversation history, generate {max_questions} short, relevant questions the user might ask next.
+
+Focus on:
+- Call center metrics (volume, duration, wait times, resolution rates)
+- Agent performance (productivity, customer satisfaction, call handling)
+- Customer insights (satisfaction scores, feedback trends, pain points)
+- Trends and patterns (time-based analysis, comparisons)
+- Actionable insights and recommendations
+
+Guidelines:
+- Keep questions concise (5-12 words)
+- Make them specific and actionable
+- Vary the question types (metrics, comparisons, trends, details)
+- Ensure relevance to the current conversation context
+
+Return ONLY a JSON array of question strings, nothing else. Example:
+["What is the average call duration?", "Show me agent performance trends", "Which issues cause the most customer complaints?"]"""
+            
+            # Build conversation context
+            conversation_context = "\n".join([
+                f"{msg.get('role', 'user').capitalize()}: {msg.get('content', '')}"
+                for msg in recent_messages
+            ])
+            
+            user_prompt = f"""Based on this conversation:
+
+{conversation_context}
+
+Generate {max_questions} relevant follow-up questions as a JSON array."""
+            
+            # Call Azure OpenAI for question generation
+            response = await asyncio.to_thread(
+                openai_client.chat.completions.create,
+                model=self.ai_foundry_settings.openai_deployment,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.7,
+                max_tokens=300,
+                response_format={"type": "json_object"}
+            )
+            
+            # Parse the response
+            content = response.choices[0].message.content
+            
+            # Try to parse as JSON
+            try:
+                # Handle both array format and object format
+                parsed = json.loads(content)
+                
+                if isinstance(parsed, list):
+                    questions = parsed
+                elif isinstance(parsed, dict):
+                    # Try common keys
+                    questions = parsed.get('questions', parsed.get('suggestions', parsed.get('followup', [])))
+                else:
+                    questions = []
+                
+                # Ensure we have strings and limit to max_questions
+                questions = [str(q).strip() for q in questions if q][:max_questions]
+                
+                logger.info(f"Generated {len(questions)} follow-up questions using Azure OpenAI")
+                return questions
+                
+            except json.JSONDecodeError as je:
+                logger.warning(f"Failed to parse OpenAI response as JSON: {je}")
+                # Try to extract questions from text if JSON parsing fails
+                lines = content.strip().split('\n')
+                questions = [line.strip(' -"[]') for line in lines if line.strip()][:max_questions]
+                return questions
+                
+        except Exception as e:
+            logger.error(f"Failed to generate follow-up questions: {e}")
+            # Return empty list on error - graceful degradation
+            return []
     
     async def get_conversation_messages(
         self,

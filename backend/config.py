@@ -74,6 +74,11 @@ class AIFoundrySettings(BaseSettings):
     app_client_id: str  # Required for MSAL OBO flow
     app_client_secret: Optional[str] = ""  # Required for MSAL OBO flow
     send_welcome_message: bool = True
+    # Azure OpenAI configuration for follow-up question generation
+    openai_endpoint: Optional[str] = ""  # Azure OpenAI endpoint (e.g., https://your-resource.openai.azure.com/)
+    openai_deployment: Optional[str] = "gpt-4o"  # Deployment name for chat completions
+    openai_api_version: str = "2024-08-01-preview"  # API version
+    enable_question_suggestions: bool = True  # Enable AI-generated follow-up questions
     
     @property
     def project_name(self) -> str:
