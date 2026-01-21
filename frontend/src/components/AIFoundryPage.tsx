@@ -1403,7 +1403,11 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
                   variant="contained"
                   onClick={() => sendMessage()}
                   disabled={!inputText.trim() || sending}
-                  sx={{ minWidth: 60, alignSelf: 'flex-end' }}
+                  sx={{ 
+                    minWidth: 60, 
+                    height: '56px',
+                    alignSelf: 'flex-end' 
+                  }}
                 >
                   <SendIcon />
                 </Button>
