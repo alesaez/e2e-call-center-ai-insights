@@ -30,6 +30,7 @@ $KeyVaultName = "demoai-kv"
 $AiFoundryAccountName = "demo-ai-insights-foundry"
 $AiFoundryProjectName = "demo-ai-project"
 $AiFoundryAgentName = "CallCenterAgent"
+$AiFoundryAgentId = ""  # Leave empty to be prompted during deployment
 $AiFoundryClientSecret = "YOUR_AI_FOUNDRY_CLIENT_SECRET_HERE"
 
 # ============================================================================

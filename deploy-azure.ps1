@@ -1123,14 +1123,14 @@ if (-not $InfraOnly) {
     }
 
     # Add AI Foundry environment variables (always configured)
-    $AiFoundryAgentId = "" # Replace in the future to retrive using CLI
+    # Check if AiFoundryAgentId is provided in config file
     if ([string]::IsNullOrEmpty($AiFoundryAgentId) -and [string]::IsNullOrEmpty($ENV:CURRENT_AZURE_AI_FOUNDRY_AGENT_ID)) {
         Write-Host "Unable to retrieve current agent ID" -ForegroundColor Yellow
         Write-Host "- Retrieve Agent ID from AI Foundry Portal, current agent name '$AiFoundryAgentName'" -ForegroundColor Yellow
         $AiFoundryAgentId = Read-Host "  Enter Agent ID"
         $ENV:CURRENT_AZURE_AI_FOUNDRY_AGENT_ID = $AiFoundryAgentId
     }
-    elseif ([string]::IsNullOrEmpty($AiFoundryAccountId)) {
+    elseif ([string]::IsNullOrEmpty($AiFoundryAgentId)) {
         $AiFoundryAgentId = $ENV:CURRENT_AZURE_AI_FOUNDRY_AGENT_ID
     }
 
