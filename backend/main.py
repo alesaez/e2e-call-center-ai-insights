@@ -65,9 +65,31 @@ from rbac_models import (
     AssignRoleRequest
 )
 
-# Configure logging
+# Custom logging formatter with icons
+class IconFormatter(logging.Formatter):
+    """Custom formatter that adds icons based on log level."""
+    
+    ICONS = {
+        logging.DEBUG: "🔍",
+        logging.INFO: "ℹ️",
+        logging.WARNING: "⚠️",
+        logging.ERROR: "❌",
+        logging.CRITICAL: "🔥"
+    }
+    
+    def format(self, record):
+        # Add icon to the beginning of the message
+        icon = self.ICONS.get(record.levelno, "")
+        record.levelname = f"{icon} {record.levelname}"
+        return super().format(record)
+
+# Configure logging with icon formatter
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
+
+# Apply icon formatter to all handlers
+for handler in logging.root.handlers:
+    handler.setFormatter(IconFormatter('%(levelname)s:%(name)s:%(message)s'))
 
 # Initialize rate limiter
 limiter = Limiter(key_func=get_remote_address, default_limits=["200/minute"])

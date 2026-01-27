@@ -114,48 +114,52 @@ class AIFoundryService:
                 credential=credential
             )
             
-            # Create a new thread for the conversation
-            thread = await asyncio.to_thread(
-                client.agents.threads.create
-            )
-            
-            conversation_id = thread.id
-            
-            # Get welcome message if agent has one configured
-            welcome_message = "Hello! How can I assist you today?"
-            
-            # Try to get the first message from the agent if configured
-            if self.ai_foundry_settings.send_welcome_message:
-                try:
-                    # Send a greeting to trigger welcome message
-                    messages = await asyncio.to_thread(
-                        client.agents.messages.list,
-                        thread_id=conversation_id
-                    )
-                    
-                    # messages is an ItemPaged iterator, convert to list
-                    messages_list = list(messages)
-                    if messages_list and len(messages_list) > 0:
-                        first_message = messages_list[0]
-                        if hasattr(first_message, 'content') and first_message.content:
-                            for content in first_message.content:
-                                # Check if content has text attribute (duck typing)
-                                if hasattr(content, 'text') and hasattr(content.text, 'value'):
-                                    welcome_message = content.text.value
-                                    break
-                except Exception as e:
-                    logger.warning(f"Failed to get welcome message: {e}")
-            
-            return {
-                "conversationId": conversation_id,
-                "userId": user_id,
-                "userName": user_name,
-                "projectName": self.ai_foundry_settings.project_name,
-                "agentId": self.ai_foundry_settings.agent_id,
-                "expiresIn": 3600,  # 1 hour
-                "sessionCreated": True,
-                "welcomeMessage": welcome_message
-            }
+            try:
+                # Create a new thread for the conversation
+                thread = await asyncio.to_thread(
+                    client.agents.threads.create
+                )
+                
+                conversation_id = thread.id
+                
+                # Get welcome message if agent has one configured
+                welcome_message = "Hello! How can I assist you today?"
+                
+                # Try to get the first message from the agent if configured
+                if self.ai_foundry_settings.send_welcome_message:
+                    try:
+                        # Send a greeting to trigger welcome message
+                        messages = await asyncio.to_thread(
+                            client.agents.messages.list,
+                            thread_id=conversation_id
+                        )
+                        
+                        # messages is an ItemPaged iterator, convert to list
+                        messages_list = list(messages)
+                        if messages_list and len(messages_list) > 0:
+                            first_message = messages_list[0]
+                            if hasattr(first_message, 'content') and first_message.content:
+                                for content in first_message.content:
+                                    # Check if content has text attribute (duck typing)
+                                    if hasattr(content, 'text') and hasattr(content.text, 'value'):
+                                        welcome_message = content.text.value
+                                        break
+                    except Exception as e:
+                        logger.warning(f"Failed to get welcome message: {e}")
+                
+                return {
+                    "conversationId": conversation_id,
+                    "userId": user_id,
+                    "userName": user_name,
+                    "projectName": self.ai_foundry_settings.project_name,
+                    "agentId": self.ai_foundry_settings.agent_id,
+                    "expiresIn": 3600,  # 1 hour
+                    "sessionCreated": True,
+                    "welcomeMessage": welcome_message
+                }
+            finally:
+                # Close the client to cleanup aiohttp session
+                await asyncio.to_thread(client.close)
             
         except Exception as e:
             logger.error(f"Failed to start Azure AI Foundry conversation: {e}")
@@ -191,107 +195,111 @@ class AIFoundryService:
                 credential=credential
             )
             
-            # Add user message to thread
-            await asyncio.to_thread(
-                client.agents.messages.create,
-                thread_id=conversation_id,
-                role="user",
-                content=message_text
-            )
-            
-            # Create and poll the run
-            run = await asyncio.to_thread(
-                client.agents.runs.create_and_process,
-                thread_id=conversation_id,
-                agent_id=self.ai_foundry_settings.agent_id
-            )
-            
-            # Get the latest messages after the run completes
-            messages = await asyncio.to_thread(
-                client.agents.messages.list,
-                thread_id=conversation_id
-            )
-            
-            response_text = ""
-            attachments = []
-            
-            # Extract the assistant's response (most recent message)
-            # messages is an ItemPaged iterator, convert to list
-            messages_list = list(messages)
-            if messages_list and len(messages_list) > 0:
-                # Find the first assistant message
-                for message in messages_list:
-                    if message.role == "assistant":
-                        # Extract text content
-                        for content in message.content:
-                            # Check if content has text attribute (duck typing)
-                            if hasattr(content, 'text') and hasattr(content.text, 'value'):
-                                response_text = content.text.value
-                                
-                                # Check for annotations (files, citations)
-                                if hasattr(content.text, 'annotations') and content.text.annotations:
-                                    for annotation in content.text.annotations:
-                                        attachments.append({
-                                            "contentType": "annotation",
-                                            "content": annotation,
-                                            "name": getattr(annotation, 'text', 'Annotation')
-                                        })
-                        break
-            
-            # If no response was collected, use a default message
-            if not response_text:
-                response_text = "I received your message."
-            
-            # Process response for visualizations if visualization service is available
-            if self.visualization_service and response_text:
-                response_text = self.visualization_service.process_message_for_visualizations(response_text)
-            
-            # Generate follow-up questions based on conversation history
-            suggested_questions = []
             try:
-                # Build conversation history from recent messages
-                conversation_history = [
-                    {"role": "user", "content": message_text},
-                    {"role": "assistant", "content": response_text}
-                ]
-                
-                # Get recent messages for better context (optional, for richer suggestions)
-                try:
-                    recent_messages = await self.get_conversation_messages(
-                        conversation_id=conversation_id,
-                        user_token=user_token,
-                        limit=6
-                    )
-                    # Convert to simpler format and reverse (oldest first)
-                    for msg in reversed(recent_messages[2:]):  # Skip the two we just added
-                        if msg.get("content"):
-                            conversation_history.insert(0, {
-                                "role": msg["role"],
-                                "content": msg["content"][0].get("text", "") if msg["content"] else ""
-                            })
-                except Exception as e:
-                    logger.debug(f"Could not retrieve full conversation history: {e}")
-                
-                # Generate questions
-                suggested_questions = await self.generate_follow_up_questions(
-                    conversation_history=conversation_history,
-                    user_token=user_token,
-                    max_questions=5
+                # Add user message to thread
+                await asyncio.to_thread(
+                    client.agents.messages.create,
+                    thread_id=conversation_id,
+                    role="user",
+                    content=message_text
                 )
-            except Exception as e:
-                logger.warning(f"Failed to generate follow-up questions: {e}")
-                # Continue without suggestions
-            
-            return {
-                "success": True,
-                "response": response_text,
-                "text": response_text,
-                "attachments": attachments,
-                "conversationId": conversation_id,
-                "runId": run.id,
-                "runStatus": run.status,
-                "suggestedQuestions": suggested_questions  # Add AI-generated suggestions
-            }
+                
+                # Create and poll the run
+                run = await asyncio.to_thread(
+                    client.agents.runs.create_and_process,
+                    thread_id=conversation_id,
+                    agent_id=self.ai_foundry_settings.agent_id
+                )
+                
+                # Get the latest messages after the run completes
+                messages = await asyncio.to_thread(
+                    client.agents.messages.list,
+                    thread_id=conversation_id
+                )
+                
+                response_text = ""
+                attachments = []
+                
+                # Extract the assistant's response (most recent message)
+                # messages is an ItemPaged iterator, convert to list
+                messages_list = list(messages)
+                if messages_list and len(messages_list) > 0:
+                    # Find the first assistant message
+                    for message in messages_list:
+                        if message.role == "assistant":
+                            # Extract text content
+                            for content in message.content:
+                                # Check if content has text attribute (duck typing)
+                                if hasattr(content, 'text') and hasattr(content.text, 'value'):
+                                    response_text = content.text.value
+                                    
+                                    # Check for annotations (files, citations)
+                                    if hasattr(content.text, 'annotations') and content.text.annotations:
+                                        for annotation in content.text.annotations:
+                                            attachments.append({
+                                                "contentType": "annotation",
+                                                "content": annotation,
+                                                "name": getattr(annotation, 'text', 'Annotation')
+                                            })
+                            break
+                
+                # If no response was collected, use a default message
+                if not response_text:
+                    response_text = "I received your message."
+                
+                # Process response for visualizations if visualization service is available
+                if self.visualization_service and response_text:
+                    response_text = self.visualization_service.process_message_for_visualizations(response_text)
+                
+                # Generate follow-up questions based on conversation history
+                suggested_questions = []
+                try:
+                    # Build conversation history from recent messages
+                    conversation_history = [
+                        {"role": "user", "content": message_text},
+                        {"role": "assistant", "content": response_text}
+                    ]
+                    
+                    # Get recent messages for better context (optional, for richer suggestions)
+                    try:
+                        recent_messages = await self.get_conversation_messages(
+                            conversation_id=conversation_id,
+                            user_token=user_token,
+                            limit=6
+                        )
+                        # Convert to simpler format and reverse (oldest first)
+                        for msg in reversed(recent_messages[2:]):  # Skip the two we just added
+                            if msg.get("content"):
+                                conversation_history.insert(0, {
+                                    "role": msg["role"],
+                                    "content": msg["content"][0].get("text", "") if msg["content"] else ""
+                                })
+                    except Exception as e:
+                        logger.debug(f"Could not retrieve full conversation history: {e}")
+                    
+                    # Generate questions
+                    suggested_questions = await self.generate_follow_up_questions(
+                        conversation_history=conversation_history,
+                        user_token=user_token,
+                        max_questions=5
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to generate follow-up questions: {e}")
+                    # Continue without suggestions
+                
+                return {
+                    "success": True,
+                    "response": response_text,
+                    "text": response_text,
+                    "attachments": attachments,
+                    "conversationId": conversation_id,
+                    "runId": run.id,
+                    "runStatus": run.status,
+                    "suggestedQuestions": suggested_questions  # Add AI-generated suggestions
+                }
+            finally:
+                # Close the client to cleanup aiohttp session
+                await asyncio.to_thread(client.close)
             
         except Exception as e:
             logger.error(f"Failed to send message to Azure AI Foundry: {e}")
@@ -485,33 +493,37 @@ Generate {max_questions} relevant follow-up questions as a JSON array."""
                 credential=credential
             )
             
-            messages = await asyncio.to_thread(
-                client.agents.messages.list,
-                thread_id=conversation_id,
-                limit=limit
-            )
-            
-            message_list = []
-            # messages is an ItemPaged iterator, iterate directly
-            for message in messages:
-                message_dict = {
-                    "id": message.id,
-                    "role": message.role,
-                    "created_at": message.created_at,
-                    "content": []
-                }
+            try:
+                messages = await asyncio.to_thread(
+                    client.agents.messages.list,
+                    thread_id=conversation_id,
+                    limit=limit
+                )
                 
-                for content in message.content:
-                    # Check if content has text attribute (duck typing)
-                    if hasattr(content, 'text') and hasattr(content.text, 'value'):
-                        message_dict["content"].append({
-                            "type": "text",
-                            "text": content.text.value
-                        })
+                message_list = []
+                # messages is an ItemPaged iterator, iterate directly
+                for message in messages:
+                    message_dict = {
+                        "id": message.id,
+                        "role": message.role,
+                        "created_at": message.created_at,
+                        "content": []
+                    }
+                    
+                    for content in message.content:
+                        # Check if content has text attribute (duck typing)
+                        if hasattr(content, 'text') and hasattr(content.text, 'value'):
+                            message_dict["content"].append({
+                                "type": "text",
+                                "text": content.text.value
+                            })
+                    
+                    message_list.append(message_dict)
                 
-                message_list.append(message_dict)
-            
-            return message_list
+                return message_list
+            finally:
+                # Close the client to cleanup aiohttp session
+                await asyncio.to_thread(client.close)
             
         except Exception as e:
             logger.error(f"Failed to get conversation messages: {e}")
