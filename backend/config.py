@@ -195,6 +195,12 @@ class Settings(BaseSettings):
     # Setting this to true bypasses all role and permission checks
     DISABLE_RBAC: bool = False
     
+    # SSL Verification Configuration
+    # WARNING: Only use DISABLE_SSL_VERIFY=true for development with corporate proxies
+    # Setting this to true disables SSL certificate verification globally
+    # Use when behind corporate proxies that perform SSL inspection
+    DISABLE_SSL_VERIFY: bool = False
+    
     # Azure Cosmos DB Configuration
     # Uses DefaultAzureCredential for localhost and ManagedIdentityCredential for Azure Container Apps
     COSMOS_DB_ACCOUNT_URI: Optional[str] = None  # Required (e.g., https://your-account.documents.azure.com:443/)

@@ -95,6 +95,15 @@ async def startup_event():
     global cosmos_service, copilot_studio_service, ai_foundry_service, conversation_service, powerbi_service, fabric_service
     settings = get_settings()
     
+    # Configure SSL verification bypass if needed (for corporate proxies)
+    if settings.DISABLE_SSL_VERIFY:
+        logger.warning("⚠️  SSL VERIFICATION GLOBALLY DISABLED - Development mode only!")
+        logger.warning("⚠️  This affects MSAL, httpx, and all SSL connections")
+        import ssl
+        import certifi
+        # Disable SSL verification globally for MSAL and other libraries
+        ssl._create_default_https_context = ssl._create_unverified_context
+    
     # Initialize Cosmos DB service if account URI is provided
     if settings.COSMOS_DB_ACCOUNT_URI:
         logger.info("Initializing Cosmos DB service...")
