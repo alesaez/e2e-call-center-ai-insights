@@ -13,9 +13,24 @@ print(f"🔍 DEBUG: SSL bypass will be {'ENABLED' if disable_ssl else 'DISABLED'
 
 if disable_ssl:
     print("⚠️  SSL VERIFICATION GLOBALLY DISABLED - Development mode only!")
-    print("⚠️  This affects MSAL, httpx, and all SSL connections")
+    print("⚠️  This affects MSAL, httpx, aiohttp, and all SSL connections")
+    
+    # Bypass SSL for standard ssl module (affects httpx, requests, urllib)
     ssl._create_default_https_context = ssl._create_unverified_context
-    print("✅ SSL bypass applied successfully")
+    
+    # Bypass SSL for aiohttp (used by MSAL and Azure SDKs)
+    import aiohttp
+    original_client_session_init = aiohttp.ClientSession.__init__
+    
+    def patched_client_session_init(self, *args, **kwargs):
+        # Force SSL verification to False for all aiohttp sessions
+        if 'connector' not in kwargs:
+            kwargs['connector'] = aiohttp.TCPConnector(ssl=False)
+        original_client_session_init(self, *args, **kwargs)
+    
+    aiohttp.ClientSession.__init__ = patched_client_session_init
+    
+    print("✅ SSL bypass applied successfully (ssl + aiohttp patched)")
 else:
     print("ℹ️  SSL verification is ENABLED (secure mode)")
 
