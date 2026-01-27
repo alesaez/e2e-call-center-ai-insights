@@ -2,6 +2,16 @@
 FastAPI backend with Microsoft Entra ID (Azure AD) authentication.
 Uses JWT token validation to secure API endpoints.
 """
+import os
+import ssl
+
+# CRITICAL: Configure SSL verification BEFORE any imports that use SSL
+# This must happen before Settings, MSAL, or any Azure SDK imports
+if os.getenv("DISABLE_SSL_VERIFY", "false").lower() == "true":
+    print("⚠️  SSL VERIFICATION GLOBALLY DISABLED - Development mode only!")
+    print("⚠️  This affects MSAL, httpx, and all SSL connections")
+    ssl._create_default_https_context = ssl._create_unverified_context
+
 from fastapi import FastAPI, Depends, HTTPException, status, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -94,15 +104,6 @@ async def startup_event():
     """Initialize services on startup."""
     global cosmos_service, copilot_studio_service, ai_foundry_service, conversation_service, powerbi_service, fabric_service
     settings = get_settings()
-    
-    # Configure SSL verification bypass if needed (for corporate proxies)
-    if settings.DISABLE_SSL_VERIFY:
-        logger.warning("⚠️  SSL VERIFICATION GLOBALLY DISABLED - Development mode only!")
-        logger.warning("⚠️  This affects MSAL, httpx, and all SSL connections")
-        import ssl
-        import certifi
-        # Disable SSL verification globally for MSAL and other libraries
-        ssl._create_default_https_context = ssl._create_unverified_context
     
     # Initialize Cosmos DB service if account URI is provided
     if settings.COSMOS_DB_ACCOUNT_URI:
