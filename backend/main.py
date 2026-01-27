@@ -382,12 +382,12 @@ async def get_user_permissions(token_payload: Dict = Depends(verify_token)) -> U
     
     # Development mode: Bypass RBAC if DISABLE_RBAC is true
     if settings.DISABLE_RBAC:
-        logger.warning("⚠️  RBAC DISABLED - Development mode: Granting full Administrator permissions to all users")
+        logger.warning("⚠️  RBAC DISABLED - Development mode: Granting Administrator role to all authenticated users")
         from rbac_models import Permission
         return UserPermissions(
-            user_id=token_payload.get("oid", "dev-user"),
-            user_email=token_payload.get("preferred_username", "dev@localhost"),
-            roles=["Administrator"],
+            user_id=token_payload.get("oid", "unknown"),
+            user_email=token_payload.get("preferred_username") or token_payload.get("email", "unknown"),
+            roles=["Administrator"],  # Grant admin role
             permissions=list(Permission),  # All permissions
             is_administrator=True
         )
