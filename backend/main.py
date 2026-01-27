@@ -7,10 +7,17 @@ import ssl
 
 # CRITICAL: Configure SSL verification BEFORE any imports that use SSL
 # This must happen before Settings, MSAL, or any Azure SDK imports
-if os.getenv("DISABLE_SSL_VERIFY", "false").lower() == "true":
+disable_ssl = os.getenv("DISABLE_SSL_VERIFY", "false").lower() == "true"
+print(f"🔍 DEBUG: DISABLE_SSL_VERIFY environment variable = '{os.getenv('DISABLE_SSL_VERIFY', 'not set')}'")
+print(f"🔍 DEBUG: SSL bypass will be {'ENABLED' if disable_ssl else 'DISABLED'}")
+
+if disable_ssl:
     print("⚠️  SSL VERIFICATION GLOBALLY DISABLED - Development mode only!")
     print("⚠️  This affects MSAL, httpx, and all SSL connections")
     ssl._create_default_https_context = ssl._create_unverified_context
+    print("✅ SSL bypass applied successfully")
+else:
+    print("ℹ️  SSL verification is ENABLED (secure mode)")
 
 from fastapi import FastAPI, Depends, HTTPException, status, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
