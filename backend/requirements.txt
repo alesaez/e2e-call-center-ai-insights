@@ -23,6 +23,9 @@ aiohttp==3.13.2
 azure-identity==1.19.0
 azure-cosmos==4.7.0
 
+# Microsoft Fabric Lakehouse SQL connectivity
+pyodbc>=5.0.0
+
 # Azure AI Foundry integration
 azure-ai-projects==1.0.0
 azure-ai-inference==1.0.0b9
