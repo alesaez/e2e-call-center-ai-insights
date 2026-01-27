@@ -121,6 +121,36 @@ class PowerBISettings(BaseSettings):
     client_secret: str  # Service principal client secret
     workspace_id: str  # Power BI workspace (group) ID
     report_id: str  # Power BI report ID
+    use_service_principal: bool = True  # Use Service Principal instead of OBO flow (default: True)
+
+
+class FabricLakehouseSettings(BaseSettings):
+    """
+    Microsoft Fabric Lakehouse configuration settings for SQL queries.
+    Used to retrieve real-time data for dashboard KPIs and analytics.
+    """
+    model_config = ConfigDict(
+        env_file=str(BASE_DIR / ".env"),
+        env_file_encoding="utf-8",
+        env_prefix="FABRIC_",
+        case_sensitive=False,
+        extra="ignore"
+    )
+    
+    workspace_id: str  # Fabric workspace ID
+    lakehouse_id: str  # Lakehouse NAME (used as database name in SQL connection, not the GUID)
+    endpoint: str  # SQL endpoint (e.g., https://<workspace>.datawarehouse.fabric.microsoft.com)
+    tenant_id: str  # Azure AD tenant ID
+    # Authentication: Automatically detects environment
+    # - Local development: Uses DefaultAzureCredential (requires 'az login')
+    # - Azure Container Apps: Uses ManagedIdentityCredential
+    # - Optional: Service Principal (provide client_id and client_secret)
+    client_id: Optional[str] = None  # Service principal client ID (optional)
+    client_secret: Optional[str] = None  # Service principal client secret (optional)
+    
+    # Connection settings
+    connection_timeout: int = 30  # seconds
+    query_timeout: int = 60  # seconds
 
 
 class Settings(BaseSettings):
@@ -150,6 +180,11 @@ class Settings(BaseSettings):
     API_TITLE: str = "Call Center AI Insights API"
     API_VERSION: str = "1.0.0"
     
+    # RBAC Configuration
+    # WARNING: Only use DISABLE_RBAC=true for local development/testing
+    # Setting this to true bypasses all role and permission checks
+    DISABLE_RBAC: bool = False
+    
     # Azure Cosmos DB Configuration
     # Uses DefaultAzureCredential for localhost and ManagedIdentityCredential for Azure Container Apps
     COSMOS_DB_ACCOUNT_URI: Optional[str] = None  # Required (e.g., https://your-account.documents.azure.com:443/)
@@ -165,6 +200,9 @@ class Settings(BaseSettings):
     
     # Power BI Configuration
     powerbi: Optional[PowerBISettings] = None
+    
+    # Microsoft Fabric Lakehouse Configuration
+    fabric_lakehouse: Optional[FabricLakehouseSettings] = None
     
     # UI Configuration Manager
     UI_CONFIG_ENVIRONMENT: str = "prod"  # Environment for UI config (dev, staging, prod)
@@ -211,6 +249,15 @@ class Settings(BaseSettings):
         else:
             print("ℹ Power BI disabled by UI configuration")
             self.powerbi = None
+        
+        # Load Fabric Lakehouse configuration (optional)
+        # Used for dashboard KPIs and real-time analytics queries
+        try:
+            self.fabric_lakehouse = FabricLakehouseSettings()
+            print(f"✓ Fabric Lakehouse configured: workspace={self.fabric_lakehouse.workspace_id}")
+        except Exception as e:
+            print(f"ℹ Fabric Lakehouse not configured (optional): {e}")
+            self.fabric_lakehouse = None
     
     @property
     def ui_config(self):

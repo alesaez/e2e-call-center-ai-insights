@@ -42,8 +42,9 @@ class PowerBIEmbedConfig:
 class PowerBIService:
     """
     Service for interacting with Power BI REST API.
-    Uses On-Behalf-Of (OBO) flow to access Power BI with user's permissions.
-    This allows users with Power BI access to view reports through the app.
+    Supports two authentication modes:
+    1. Service Principal (default): Uses app-only authentication
+    2. On-Behalf-Of (OBO) flow: Uses user's permissions
     """
     
     POWER_BI_API_BASE = "https://api.powerbi.com/v1.0/myorg"
@@ -55,64 +56,87 @@ class PowerBIService:
         client_id: str,
         client_secret: str,
         workspace_id: str,
-        report_id: str
+        report_id: str,
+        use_service_principal: bool = True
     ):
         """
-        Initialize Power BI service for OBO flow.
+        Initialize Power BI service.
         
         Args:
             tenant_id: Azure AD tenant ID
-            client_id: Backend app registration client ID
-            client_secret: Backend app registration client secret
+            client_id: App registration client ID
+            client_secret: App registration client secret
             workspace_id: Power BI workspace ID (group ID)
             report_id: Power BI report ID
+            use_service_principal: Use Service Principal auth (True) or OBO flow (False)
         """
         self.tenant_id = tenant_id
         self.client_id = client_id
         self.client_secret = client_secret
         self.workspace_id = workspace_id
         self.report_id = report_id
+        self.use_service_principal = use_service_principal
         
-        # Initialize MSAL confidential client for OBO flow
+        # Initialize MSAL confidential client
         self.msal_app = ConfidentialClientApplication(
             client_id=self.client_id,
             client_credential=self.client_secret,
             authority=f"https://login.microsoftonline.com/{self.tenant_id}"
         )
         
+        auth_mode = "Service Principal" if use_service_principal else "OBO flow"
         logger.info(
-            f"PowerBI Service initialized for OBO flow: workspace={workspace_id}, report={report_id}"
+            f"PowerBI Service initialized with {auth_mode}: workspace={workspace_id}, report={report_id}"
         )
     
-    async def _get_access_token(self, user_access_token: str) -> str:
+    async def _get_access_token(self, user_access_token: Optional[str] = None) -> str:
         """
-        Acquire Power BI access token using On-Behalf-Of (OBO) flow.
-        Exchanges the user's access token for a Power BI token.
+        Acquire Power BI access token.
+        Uses Service Principal (app-only) or OBO flow based on configuration.
         
         Args:
-            user_access_token: The user's access token from the frontend
+            user_access_token: The user's access token (required for OBO flow, ignored for Service Principal)
         
         Returns:
-            Access token for Power BI API (on behalf of the user)
+            Access token for Power BI API
         
         Raises:
             Exception: If token acquisition fails
         """
-        logger.info("Acquiring Power BI access token via OBO flow")
-        
-        # Acquire token using On-Behalf-Of flow
-        result = self.msal_app.acquire_token_on_behalf_of(
-            user_assertion=user_access_token,
-            scopes=[self.POWER_BI_SCOPE]
-        )
-        
-        if "access_token" not in result:
-            error_msg = result.get("error_description", result.get("error", "Unknown error"))
-            logger.error(f"Failed to acquire Power BI access token via OBO: {error_msg}")
-            raise Exception(f"Failed to acquire Power BI access token: {error_msg}")
-        
-        logger.info("Power BI access token acquired successfully via OBO")
-        return result["access_token"]
+        if self.use_service_principal:
+            # Service Principal (app-only) authentication
+            logger.info("Acquiring Power BI access token via Service Principal")
+            
+            result = self.msal_app.acquire_token_for_client(
+                scopes=[self.POWER_BI_SCOPE]
+            )
+            
+            if "access_token" not in result:
+                error_msg = result.get("error_description", result.get("error", "Unknown error"))
+                logger.error(f"Failed to acquire Power BI access token via Service Principal: {error_msg}")
+                raise Exception(f"Failed to acquire Power BI access token: {error_msg}")
+            
+            logger.info("Power BI access token acquired successfully via Service Principal")
+            return result["access_token"]
+        else:
+            # On-Behalf-Of (OBO) flow
+            if not user_access_token:
+                raise Exception("User access token is required for OBO flow")
+            
+            logger.info("Acquiring Power BI access token via OBO flow")
+            
+            result = self.msal_app.acquire_token_on_behalf_of(
+                user_assertion=user_access_token,
+                scopes=[self.POWER_BI_SCOPE]
+            )
+            
+            if "access_token" not in result:
+                error_msg = result.get("error_description", result.get("error", "Unknown error"))
+                logger.error(f"Failed to acquire Power BI access token via OBO: {error_msg}")
+                raise Exception(f"Failed to acquire Power BI access token: {error_msg}")
+            
+            logger.info("Power BI access token acquired successfully via OBO")
+            return result["access_token"]
     
     async def get_report_metadata(self, access_token: str) -> Dict[str, Any]:
         """
@@ -228,16 +252,16 @@ class PowerBIService:
     
     async def get_embed_config(
         self, 
-        user_access_token: str,
+        user_access_token: Optional[str] = None,
         report_id: Optional[str] = None,
         workspace_id: Optional[str] = None
     ) -> PowerBIEmbedConfig:
         """
         Get complete embed configuration including report metadata and embed token.
-        Uses On-Behalf-Of flow to access Power BI with user's permissions.
+        Uses Service Principal (app-only) or OBO flow based on configuration.
         
         Args:
-            user_access_token: The user's access token from the frontend
+            user_access_token: The user's access token (required for OBO flow, ignored for Service Principal)
             report_id: Optional specific report ID (overrides instance default)
             workspace_id: Optional specific workspace ID (overrides instance default)
         
@@ -253,7 +277,7 @@ class PowerBIService:
         
         logger.info(f"Getting embed config for report: {target_report_id}")
         
-        # Get Power BI access token via OBO flow
+        # Get Power BI access token (Service Principal or OBO flow)
         powerbi_access_token = await self._get_access_token(user_access_token)
         
         # Fetch report metadata (includes embedUrl and datasetId)
@@ -293,7 +317,7 @@ class PowerBIService:
     
     async def export_report_to_pdf(
         self,
-        user_access_token: str,
+        user_access_token: Optional[str] = None,
         report_id: Optional[str] = None,
         workspace_id: Optional[str] = None
     ) -> Dict[str, str]:
@@ -302,7 +326,7 @@ class PowerBIService:
         Returns export ID that can be used to poll for completion.
         
         Args:
-            user_access_token: The user's access token from the frontend
+            user_access_token: The user's access token from the frontend (required for OBO flow, optional for Service Principal)
             report_id: Optional specific report ID (overrides instance default)
             workspace_id: Optional specific workspace ID (overrides instance default)
         
@@ -346,8 +370,8 @@ class PowerBIService:
     
     async def get_export_status(
         self,
-        user_access_token: str,
-        export_id: str,
+        user_access_token: Optional[str] = None,
+        export_id: str = None,
         report_id: Optional[str] = None,
         workspace_id: Optional[str] = None
     ) -> Dict[str, Any]:
@@ -355,7 +379,7 @@ class PowerBIService:
         Get the status of a Power BI export operation.
         
         Args:
-            user_access_token: The user's access token from the frontend
+            user_access_token: The user's access token from the frontend (required for OBO flow, optional for Service Principal)
             export_id: Export operation ID
             report_id: Optional specific report ID (overrides instance default)
             workspace_id: Optional specific workspace ID (overrides instance default)
@@ -394,8 +418,8 @@ class PowerBIService:
     
     async def get_export_file(
         self,
-        user_access_token: str,
-        export_id: str,
+        user_access_token: Optional[str] = None,
+        export_id: str = None,
         report_id: Optional[str] = None,
         workspace_id: Optional[str] = None
     ) -> bytes:
@@ -403,7 +427,7 @@ class PowerBIService:
         Download the exported PDF file.
         
         Args:
-            user_access_token: The user's access token from the frontend
+            user_access_token: The user's access token from the frontend (required for OBO flow, optional for Service Principal)
             export_id: Export operation ID
             report_id: Optional specific report ID (overrides instance default)
             workspace_id: Optional specific workspace ID (overrides instance default)

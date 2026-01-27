@@ -45,6 +45,7 @@ from conversation_service import ConversationService
 from powerbi_service import PowerBIService
 from visualization_service import visualization_service
 from rbac_service import RBACService
+from fabric_lakehouse_service import FabricLakehouseService
 from rbac_models import (
     Permission,
     UserPermissions,
@@ -81,6 +82,7 @@ ai_foundry_service: Optional[AIFoundryService] = None
 conversation_service: Optional[ConversationService] = None
 powerbi_service: Optional[PowerBIService] = None
 rbac_service: Optional[RBACService] = None
+fabric_service: Optional[FabricLakehouseService] = None
 
 # Cached settings
 @lru_cache()
@@ -90,7 +92,7 @@ def get_settings():
 @app.on_event("startup")
 async def startup_event():
     """Initialize services on startup."""
-    global cosmos_service, copilot_studio_service, ai_foundry_service, conversation_service, powerbi_service
+    global cosmos_service, copilot_studio_service, ai_foundry_service, conversation_service, powerbi_service, fabric_service
     settings = get_settings()
     
     # Initialize Cosmos DB service if account URI is provided
@@ -132,9 +134,11 @@ async def startup_event():
                 client_id=settings.powerbi.client_id,
                 client_secret=settings.powerbi.client_secret,
                 workspace_id=settings.powerbi.workspace_id,
-                report_id=settings.powerbi.report_id
+                report_id=settings.powerbi.report_id,
+                use_service_principal=settings.powerbi.use_service_principal
             )
-            logger.info("✓ Power BI service initialized")
+            auth_mode = "Service Principal" if settings.powerbi.use_service_principal else "OBO flow"
+            logger.info(f"✓ Power BI service initialized with {auth_mode}")
         except Exception as e:
             logger.error(f"Failed to initialize Power BI service: {e}")
             powerbi_service = None
@@ -146,13 +150,30 @@ async def startup_event():
     global rbac_service
     rbac_service = RBACService(cosmos_service)
     logger.info("✓ RBAC service initialized")
+    
+    # Initialize Fabric Lakehouse service if configured
+    if settings.fabric_lakehouse:
+        try:
+            fabric_service = FabricLakehouseService(settings.fabric_lakehouse)
+            # Test connection
+            if await fabric_service.test_connection():
+                logger.info("✓ Fabric Lakehouse service initialized and connection tested")
+            else:
+                logger.warning("⚠ Fabric Lakehouse service initialized but connection test failed")
+        except Exception as e:
+            logger.error(f"Failed to initialize Fabric Lakehouse service: {e}")
+            fabric_service = None
+    else:
+        logger.info("ℹ Fabric Lakehouse not configured - dashboard will use mock data")
 
 @app.on_event("shutdown")
 async def shutdown_event():
     """Cleanup on shutdown."""
-    global cosmos_service
+    global cosmos_service, fabric_service
     if cosmos_service:
         await cosmos_service.close()
+    if fabric_service:
+        fabric_service.close()
 
 # CORS configuration
 settings = get_settings()
@@ -357,6 +378,20 @@ async def get_user_permissions(token_payload: Dict = Depends(verify_token)) -> U
     This is a dependency that can be used in endpoints.
     Raises 403 if user has no roles assigned.
     """
+    settings = get_settings()
+    
+    # Development mode: Bypass RBAC if DISABLE_RBAC is true
+    if settings.DISABLE_RBAC:
+        logger.warning("⚠️  RBAC DISABLED - Development mode: Granting full Administrator permissions to all users")
+        from rbac_models import Permission
+        return UserPermissions(
+            user_id=token_payload.get("oid", "dev-user"),
+            user_email=token_payload.get("preferred_username", "dev@localhost"),
+            roles=["Administrator"],
+            permissions=list(Permission),  # All permissions
+            is_administrator=True
+        )
+    
     if not rbac_service:
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
@@ -518,17 +553,136 @@ async def get_dashboard_kpis(
     user_permissions: UserPermissions = Depends(require_permission(Permission.DASHBOARD_VIEW))
 ):
     """
-    Get dashboard KPI data (protected endpoint).
-    Returns mock data for demonstration.
+    Get dashboard KPI data with full configuration (protected endpoint).
+    Returns KPI configuration including title, subtitle, icon, value, and trend.
+    Backend determines all display properties allowing dynamic updates.
     Requires: DASHBOARD_VIEW permission
+    
+    Data Source: Microsoft Fabric Lakehouse - CurrentKPI table
+    Fetches all KPIs for today's date in a single query
     """
-    return {
-        "totalCalls": 1543,
-        "avgHandlingTime": "5:32",
-        "customerSatisfaction": 4.5,
-        "agentAvailability": 87,
-        "escalationRate": 12.3
-    }
+    
+    # Default mock KPIs (used if Fabric service is unavailable)
+    default_kpis = [
+        {
+            "id": "total-calls",
+            "title": "Total Call Volume",
+            "subtitle": "Total calls today",
+            "icon": "Phone",
+            "color": "primary.main",
+            "value": "1,543",
+            "rawValue": 1543,
+            "trend": {"value": 8.5, "isPositive": True},
+            "order": 1
+        },
+        {
+            "id": "avg-handling-time",
+            "title": "Avg Handling Time",
+            "subtitle": "Minutes per call",
+            "icon": "AccessTime",
+            "color": "info.main",
+            "value": "5:32",
+            "rawValue": 332,
+            "trend": {"value": 3.2, "isPositive": False},
+            "order": 2
+        },
+        {
+            "id": "customer-satisfaction",
+            "title": "Customer Satisfaction",
+            "subtitle": "Average rating",
+            "icon": "SentimentSatisfied",
+            "color": "success.main",
+            "value": "4.5/5",
+            "rawValue": 4.5,
+            "trend": {"value": 5.1, "isPositive": True},
+            "order": 3
+        },
+        {
+            "id": "agent-availability",
+            "title": "Agent Availability",
+            "subtitle": "Currently available",
+            "icon": "People",
+            "color": "warning.main",
+            "value": "87%",
+            "rawValue": 87,
+            "trend": {"value": 2.3, "isPositive": True},
+            "order": 4
+        },
+        {
+            "id": "escalation-rate",
+            "title": "Escalation Rate",
+            "subtitle": "Escalated to supervisor",
+            "icon": "TrendingUp",
+            "color": "error.main",
+            "value": "12.3%",
+            "rawValue": 12.3,
+            "trend": {"value": 1.8, "isPositive": False},
+            "order": 5
+        }
+    ]
+    
+    # If Fabric service is available, fetch real data from CurrentKPI table
+    if fabric_service:
+        try:
+            logger.info("Fetching KPIs from Fabric Lakehouse CurrentKPI table...")
+            # Single query to fetch all KPIs for today
+            # Since we're connected to a specific lakehouse database, we can reference tables directly
+            query = """
+            SELECT 
+                icon,
+                title,
+                subtitle,
+                value,
+                rawValue,
+                trend,
+                trend_isPositive,
+                display_order,
+                color
+            FROM currentkpi
+            WHERE CAST(kpiDate AS DATE) = CAST(GETDATE() AS DATE)
+            ORDER BY display_order ASC
+            """
+            
+            results = await fabric_service.execute_query(query)
+            logger.info(f"Fabric query returned {len(results) if results else 0} rows")
+            
+            if results and len(results) > 0:
+                logger.info(f"Processing {len(results)} KPI rows from Fabric Lakehouse")
+                # Transform database results to API format
+                kpis = []
+                for row in results:
+                    # Generate ID from title (convert to kebab-case)
+                    kpi_id = row.get('title', '').lower().replace(' ', '-')
+                    
+                    kpi = {
+                        "id": kpi_id,
+                        "title": row.get('title', ''),
+                        "subtitle": row.get('subtitle', ''),
+                        "icon": row.get('icon', ''),
+                        "color": row.get('color', 'primary.main'),
+                        "value": row.get('value', ''),
+                        "rawValue": float(row.get('rawValue', 0)),
+                        "trend": {
+                            "value": float(row.get('trend', 0)),
+                            "isPositive": bool(row.get('trend_isPositive', True))
+                        },
+                        "order": int(row.get('display_order', 0))
+                    }
+                    kpis.append(kpi)
+                
+                logger.info(f"Dashboard KPIs fetched from Fabric Lakehouse CurrentKPI table: {len(kpis)} KPIs")
+                return {"kpis": kpis}
+            else:
+                logger.warning("No KPI data found in CurrentKPI table for today, using mock data")
+                
+        except Exception as e:
+            logger.error(f"Error fetching KPIs from Fabric CurrentKPI table: {e}")
+            logger.info("Using mock data as fallback")
+    else:
+        logger.debug("Fabric service not available, using mock data")
+    
+    # Return default mock data as fallback
+    return {"kpis": default_kpis}
 
 @app.get("/api/dashboard/charts")
 async def get_dashboard_charts(
@@ -590,7 +744,7 @@ async def get_powerbi_embed_config(
 ):
     """
     Get Power BI embed configuration including report ID, embed URL, and embed token.
-    Uses On-Behalf-Of (OBO) flow to access Power BI with user's permissions.
+    Supports both Service Principal (app-only) and On-Behalf-Of (OBO) authentication modes.
     Requires: POWERBI_VIEW permission
     
     Args:
@@ -615,22 +769,24 @@ async def get_powerbi_embed_config(
         )
     
     try:
-        # Extract user's access token from Authorization header
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing or invalid Authorization header"
-            )
+        # Extract user's access token if using OBO flow
+        user_access_token = None
+        if not powerbi_service.use_service_principal:
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Missing or invalid Authorization header (required for OBO flow)"
+                )
+            user_access_token = auth_header[7:]  # Remove "Bearer " prefix
         
-        user_access_token = auth_header[7:]  # Remove "Bearer " prefix
+        auth_mode = "Service Principal" if powerbi_service.use_service_principal else "OBO flow"
+        logger.info(f"Generating Power BI embed config using {auth_mode} for user: {user_permissions.user_email}")
         
-        logger.info(f"Generating Power BI embed config for user: {user_permissions.user_email}")
-        
-        # Get complete embed configuration using OBO flow
+        # Get complete embed configuration
         # Use provided reportId and workspaceId if available, otherwise use defaults
         embed_config = await powerbi_service.get_embed_config(
-            user_access_token,
+            user_access_token=user_access_token,
             report_id=reportId,
             workspace_id=workspaceId
         )
@@ -677,19 +833,22 @@ async def export_powerbi_report_to_pdf(
         )
     
     try:
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing or invalid Authorization header"
-            )
+        # Extract user's access token if using OBO flow
+        user_access_token = None
+        if not powerbi_service.use_service_principal:
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Missing or invalid Authorization header (required for OBO flow)"
+                )
+            user_access_token = auth_header[7:]
         
-        user_access_token = auth_header[7:]
-        
-        logger.info(f"Initiating PDF export for user: {user_permissions.user_email}")
+        auth_mode = "Service Principal" if powerbi_service.use_service_principal else "OBO flow"
+        logger.info(f"Initiating PDF export using {auth_mode} for user: {user_permissions.user_email}")
         
         export_data = await powerbi_service.export_report_to_pdf(
-            user_access_token,
+            user_access_token=user_access_token,
             report_id=reportId,
             workspace_id=workspaceId
         )
@@ -733,20 +892,22 @@ async def get_powerbi_export_status(
         )
     
     try:
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing or invalid Authorization header"
-            )
-        
-        user_access_token = auth_header[7:]
+        # Extract user's access token if using OBO flow
+        user_access_token = None
+        if not powerbi_service.use_service_principal:
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Missing or invalid Authorization header (required for OBO flow)"
+                )
+            user_access_token = auth_header[7:]
         
         logger.info(f"Getting export status for export_id: {export_id}")
         
         status_data = await powerbi_service.get_export_status(
-            user_access_token,
-            export_id,
+            user_access_token=user_access_token,
+            export_id=export_id,
             report_id=reportId,
             workspace_id=workspaceId
         )
@@ -792,18 +953,20 @@ async def download_powerbi_export_file(
         )
     
     try:
-        auth_header = request.headers.get("Authorization", "")
-        if not auth_header.startswith("Bearer "):
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail="Missing or invalid Authorization header"
-            )
-        
-        user_access_token = auth_header[7:]
+        # Extract user's access token if using OBO flow
+        user_access_token = None
+        if not powerbi_service.use_service_principal:
+            auth_header = request.headers.get("Authorization", "")
+            if not auth_header.startswith("Bearer "):
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail="Missing or invalid Authorization header (required for OBO flow)"
+                )
+            user_access_token = auth_header[7:]
         
         file_bytes = await powerbi_service.get_export_file(
-            user_access_token,
-            export_id,
+            user_access_token=user_access_token,
+            export_id=export_id,
             report_id=reportId,
             workspace_id=workspaceId
         )

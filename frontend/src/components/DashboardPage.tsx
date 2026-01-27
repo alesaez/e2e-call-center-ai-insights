@@ -34,12 +34,23 @@ import apiClient from '../services/apiClient';
 import { UIConfig, getTabConfig } from '../services/featureConfig';
 
 // Types for KPI data
+interface KPIItem {
+  id: string;
+  title: string;
+  subtitle: string;
+  icon: string;
+  color: string;
+  value: string;
+  rawValue: number;
+  trend: {
+    value: number;
+    isPositive: boolean;
+  };
+  order: number;
+}
+
 interface KPIData {
-  totalCalls: number;
-  avgHandlingTime: string;
-  customerSatisfaction: number;
-  agentAvailability: number;
-  escalationRate: number;
+  kpis: KPIItem[];
 }
 
 interface ChartData {
@@ -78,6 +89,18 @@ export default function DashboardPage({ uiConfig }: DashboardPageProps) {
     }
   };
 
+  // Icon mapping for dynamic icons from backend
+  const getIconComponent = (iconName: string) => {
+    const iconMap: Record<string, JSX.Element> = {
+      'Phone': <PhoneIcon />,
+      'AccessTime': <AccessTimeIcon />,
+      'SentimentSatisfied': <SatisfactionIcon />,
+      'People': <PeopleIcon />,
+      'TrendingUp': <EscalationIcon />,
+    };
+    return iconMap[iconName] || <PhoneIcon />;
+  };
+
   // Colors for charts
   const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
 
@@ -92,63 +115,23 @@ export default function DashboardPage({ uiConfig }: DashboardPageProps) {
         {dashboardTab?.labels.subtitle || 'Real-time insights for call center operations'}
       </Typography>
 
-      {/* KPI Cards */}
+      {/* KPI Cards - Dynamic from Backend */}
       <Grid container spacing={3} sx={{ mb: 3 }}>
-        <Grid item xs={12} sm={6} md={4} lg={2.4}>
-          <KPICard
-            title="Total Call Volume"
-            value={kpiData?.totalCalls.toLocaleString() || '0'}
-            subtitle="Total calls today"
-            icon={<PhoneIcon />}
-            trend={{ value: 8.5, isPositive: true }}
-            loading={loading}
-            color="primary.main"
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={4} lg={2.4}>
-          <KPICard
-            title="Avg Handling Time"
-            value={kpiData?.avgHandlingTime || '0:00'}
-            subtitle="Minutes per call"
-            icon={<AccessTimeIcon />}
-            trend={{ value: 3.2, isPositive: false }}
-            loading={loading}
-            color="info.main"
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={4} lg={2.4}>
-          <KPICard
-            title="Customer Satisfaction"
-            value={kpiData?.customerSatisfaction ? `${kpiData.customerSatisfaction}/5` : '0/5'}
-            subtitle="Average rating"
-            icon={<SatisfactionIcon />}
-            trend={{ value: 5.1, isPositive: true }}
-            loading={loading}
-            color="success.main"
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={4} lg={2.4}>
-          <KPICard
-            title="Agent Availability"
-            value={kpiData?.agentAvailability ? `${kpiData.agentAvailability}%` : '0%'}
-            subtitle="Currently available"
-            icon={<PeopleIcon />}
-            trend={{ value: 2.3, isPositive: true }}
-            loading={loading}
-            color="warning.main"
-          />
-        </Grid>
-        <Grid item xs={12} sm={6} md={4} lg={2.4}>
-          <KPICard
-            title="Escalation Rate"
-            value={kpiData?.escalationRate ? `${kpiData.escalationRate}%` : '0%'}
-            subtitle="Escalated to supervisor"
-            icon={<EscalationIcon />}
-            trend={{ value: 1.8, isPositive: false }}
-            loading={loading}
-            color="error.main"
-          />
-        </Grid>
+        {kpiData?.kpis
+          .sort((a, b) => a.order - b.order)
+          .map((kpi) => (
+            <Grid key={kpi.id} item xs={12} sm={6} md={4} lg={2.4}>
+              <KPICard
+                title={kpi.title}
+                value={kpi.value}
+                subtitle={kpi.subtitle}
+                icon={getIconComponent(kpi.icon)}
+                trend={kpi.trend}
+                loading={loading}
+                color={kpi.color}
+              />
+            </Grid>
+          ))}
       </Grid>
 
       {/* Charts */}
