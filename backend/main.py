@@ -267,14 +267,19 @@ async def get_jwks() -> Dict:
     settings = get_settings()
     jwks_url = f"https://login.microsoftonline.com/{settings.ENTRA_TENANT_ID}/discovery/v2.0/keys"
     
+    # Check if SSL verification should be disabled
+    verify_ssl = not settings.DISABLE_SSL_VERIFY
+    
     try:
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=verify_ssl) as client:
             response = await client.get(jwks_url, timeout=10.0)
             response.raise_for_status()
             _jwks_cache = response.json()
             return _jwks_cache
     except Exception as e:
         logger.error(f"Failed to fetch JWKS: {e}")
+        if "CERTIFICATE_VERIFY_FAILED" in str(e) or "certificate" in str(e).lower():
+            logger.error("💡 SSL certificate error detected. If behind a corporate proxy, set DISABLE_SSL_VERIFY=true in .env")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to fetch signing keys"

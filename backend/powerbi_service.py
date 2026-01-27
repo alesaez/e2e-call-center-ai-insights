@@ -77,6 +77,10 @@ class PowerBIService:
         self.report_id = report_id
         self.use_service_principal = use_service_principal
         
+        # Check if SSL verification should be disabled (for corporate proxies)
+        import os
+        self.verify_ssl = os.getenv("DISABLE_SSL_VERIFY", "false").lower() != "true"
+        
         # Initialize MSAL confidential client
         self.msal_app = ConfidentialClientApplication(
             client_id=self.client_id,
@@ -159,7 +163,7 @@ class PowerBIService:
         
         logger.info(f"Fetching Power BI report metadata: {self.report_id}")
         
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=self.verify_ssl) as client:
             response = await client.get(
                 url,
                 headers={"Authorization": f"Bearer {access_token}"}
@@ -225,7 +229,7 @@ class PowerBIService:
         
         logger.info(f"Generating Power BI embed token for report: {self.report_id}")
         
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(verify=self.verify_ssl) as client:
             response = await client.post(
                 url,
                 json=request_body,
@@ -349,7 +353,7 @@ class PowerBIService:
         
         logger.info(f"Requesting PDF export for report: {target_report_id}")
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, verify=self.verify_ssl) as client:
             response = await client.post(
                 url,
                 json=request_body,
@@ -399,7 +403,7 @@ class PowerBIService:
         
         logger.info(f"Checking export status: {export_id} for report: {target_report_id}")
         
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=30.0, verify=self.verify_ssl) as client:
             response = await client.get(
                 url,
                 headers={"Authorization": f"Bearer {powerbi_access_token}"}
@@ -445,7 +449,7 @@ class PowerBIService:
         
         url = f"{self.POWER_BI_API_BASE}/groups/{target_workspace_id}/reports/{target_report_id}/exports/{export_id}/file"
         
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=60.0, verify=self.verify_ssl) as client:
             response = await client.get(
                 url,
                 headers={"Authorization": f"Bearer {powerbi_access_token}"}
