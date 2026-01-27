@@ -6,7 +6,7 @@ import asyncio
 import os
 from azure.cosmos.aio import CosmosClient
 from azure.cosmos import PartitionKey, exceptions
-from azure.identity.aio import DefaultAzureCredential,ManagedIdentityCredential
+from azure.identity.aio import DefaultAzureCredential, ManagedIdentityCredential, AzureCliCredential
 from typing import List, Optional
 import logging
 from config import Settings
@@ -62,14 +62,14 @@ class CosmosDBService:
             logger.info(f"Cosmos DB: Account URI configured: {self.settings.COSMOS_DB_ACCOUNT_URI}")
             
             if is_localhost:
-                # For localhost development, use DefaultAzureCredential (Azure CLI, Visual Studio, etc.)
-                logger.info("Cosmos DB: Using DefaultAzureCredential for localhost development")
-                self.credential = DefaultAzureCredential()
+                # For localhost development, use AzureCliCredential directly to avoid expired SharedTokenCache
+                logger.info("Cosmos DB: Using AzureCliCredential for localhost development (requires 'az login')")
+                self.credential = AzureCliCredential()
                 self.client = CosmosClient(
                     url=self.settings.COSMOS_DB_ACCOUNT_URI,
                     credential=self.credential
                 )
-                logger.info("✓ Cosmos DB: Client created with DefaultAzureCredential")
+                logger.info("✓ Cosmos DB: Client created with AzureCliCredential")
             else:
                 # For Azure Container Apps, use ManagedIdentityCredential
                 logger.info("Cosmos DB: Using ManagedIdentityCredential for Azure Container Apps")
