@@ -128,6 +128,7 @@ class FabricLakehouseSettings(BaseSettings):
     """
     Microsoft Fabric Lakehouse configuration settings for SQL queries.
     Used to retrieve real-time data for dashboard KPIs and analytics.
+    All fields are optional - service will only initialize if configured.
     """
     model_config = ConfigDict(
         env_file=str(BASE_DIR / ".env"),
@@ -137,10 +138,10 @@ class FabricLakehouseSettings(BaseSettings):
         extra="ignore"
     )
     
-    workspace_id: str  # Fabric workspace ID
-    lakehouse_id: str  # Lakehouse NAME (used as database name in SQL connection, not the GUID)
-    endpoint: str  # SQL endpoint (e.g., https://<workspace>.datawarehouse.fabric.microsoft.com)
-    tenant_id: str  # Azure AD tenant ID
+    workspace_id: Optional[str] = None  # Fabric workspace ID
+    lakehouse_id: Optional[str] = None  # Lakehouse NAME (used as database name in SQL connection, not the GUID)
+    endpoint: Optional[str] = None  # SQL endpoint (e.g., https://<workspace>.datawarehouse.fabric.microsoft.com)
+    tenant_id: Optional[str] = None  # Azure AD tenant ID
     # Authentication: Automatically detects environment
     # - Local development: Uses DefaultAzureCredential (requires 'az login')
     # - Azure Container Apps: Uses ManagedIdentityCredential
@@ -151,6 +152,15 @@ class FabricLakehouseSettings(BaseSettings):
     # Connection settings
     connection_timeout: int = 30  # seconds
     query_timeout: int = 60  # seconds
+    
+    def is_configured(self) -> bool:
+        """Check if all required fields are configured."""
+        return all([
+            self.workspace_id,
+            self.lakehouse_id,
+            self.endpoint,
+            self.tenant_id
+        ])
 
 
 class Settings(BaseSettings):
@@ -252,11 +262,21 @@ class Settings(BaseSettings):
         
         # Load Fabric Lakehouse configuration (optional)
         # Used for dashboard KPIs and real-time analytics queries
-        try:
-            self.fabric_lakehouse = FabricLakehouseSettings()
-            print(f"✓ Fabric Lakehouse configured: workspace={self.fabric_lakehouse.workspace_id}")
-        except Exception as e:
-            print(f"ℹ Fabric Lakehouse not configured (optional): {e}")
+        # Only load if FABRIC_ENDPOINT is set (indicates intent to use Fabric)
+        import os
+        if os.getenv("FABRIC_ENDPOINT"):
+            try:
+                self.fabric_lakehouse = FabricLakehouseSettings()
+                if self.fabric_lakehouse.is_configured():
+                    print(f"✓ Fabric Lakehouse configured: workspace={self.fabric_lakehouse.workspace_id}, lakehouse={self.fabric_lakehouse.lakehouse_id}")
+                else:
+                    print(f"⚠ Fabric Lakehouse partially configured - missing required fields")
+                    self.fabric_lakehouse = None
+            except Exception as e:
+                print(f"⚠ Fabric Lakehouse configuration error: {e}")
+                self.fabric_lakehouse = None
+        else:
+            print("ℹ Fabric Lakehouse not configured (optional) - dashboard will use mock data")
             self.fabric_lakehouse = None
     
     @property

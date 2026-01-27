@@ -152,7 +152,7 @@ async def startup_event():
     logger.info("✓ RBAC service initialized")
     
     # Initialize Fabric Lakehouse service if configured
-    if settings.fabric_lakehouse:
+    if settings.fabric_lakehouse and settings.fabric_lakehouse.is_configured():
         try:
             fabric_service = FabricLakehouseService(settings.fabric_lakehouse)
             # Test connection
@@ -165,6 +165,7 @@ async def startup_event():
             fabric_service = None
     else:
         logger.info("ℹ Fabric Lakehouse not configured - dashboard will use mock data")
+        fabric_service = None
 
 @app.on_event("shutdown")
 async def shutdown_event():
