@@ -1417,6 +1417,13 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
         )}
       </Paper>
 
+      {/* AI Disclaimer */}
+      <Alert severity="info" sx={{ mb: 1 }}>
+        <Typography variant="caption">
+          This AI assistant may generate inaccurate information. Please validate critical outputs.
+        </Typography>
+      </Alert>
+
       <Typography variant="caption" color="text.secondary">
         Powered by Azure AI Foundry • Agent ID: {session?.agentId?.substring(0, 12)}...
       </Typography>
