@@ -1110,13 +1110,8 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
       <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 1 }}>
         <Box>
           <Typography variant="h4" fontWeight={600}>
-            {aiFoundryTab?.labels.title || 'AI Foundry Chat'}
+            {currentConversationTitle || aiFoundryTab?.labels.title || 'AI Foundry Chat'}
           </Typography>
-          {currentConversationTitle && (
-            <Typography variant="body2" color="text.secondary" sx={{ mt: 0.5 }}>
-              Current conversation: {currentConversationTitle}
-            </Typography>
-          )}
         </Box>
         <Button
           variant="outlined"
@@ -1130,31 +1125,6 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
       <Typography variant="body1" color="text.secondary" sx={{ mb: 2 }}>
         {aiFoundryTab?.labels.subtitle || 'Chat with our Azure AI Foundry assistant to get insights about call center performance, agent metrics, and more.'}
       </Typography>
-
-      {session && (
-        <Stack direction="row" spacing={1} sx={{ mb: 2 }}>
-          <Chip
-            size="small"
-            label={`Project: ${session.projectName}`}
-            color="primary"
-            variant="outlined"
-          />
-          {currentConversationId && messages.length > 1 && (
-            <Chip
-              size="small"
-              label="Conversation Resumed"
-              color="secondary"
-              variant="outlined"
-            />
-          )}
-          <Chip
-            size="small"
-            label={`Agent: ${session.agentId.substring(0, 12)}...`}
-            color="secondary"
-            variant="outlined"
-          />
-        </Stack>
-      )}
 
       <Paper 
         sx={{ 
@@ -1420,14 +1390,9 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
       {/* AI Disclaimer */}
       <Alert severity="info" sx={{ mb: 1 }}>
         <Typography variant="caption">
-          This AI assistant may generate inaccurate information. Please validate critical outputs.
+           Powered by Azure AI Foundry • This AI assistant may generate inaccurate information. Please validate critical outputs.
         </Typography>
       </Alert>
-
-      <Typography variant="caption" color="text.secondary">
-        Powered by Azure AI Foundry • Agent ID: {session?.agentId?.substring(0, 12)}...
-      </Typography>
-
 
     </Box>
   );
