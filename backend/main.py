@@ -4,6 +4,13 @@ Uses JWT token validation to secure API endpoints.
 """
 import os
 import ssl
+from pathlib import Path
+
+# CRITICAL: Load .env file BEFORE checking environment variables
+# Pydantic-settings doesn't load .env until Settings() is instantiated
+from dotenv import load_dotenv
+env_path = Path(__file__).parent / ".env"
+load_dotenv(dotenv_path=env_path)
 
 # CRITICAL: Configure SSL verification BEFORE any imports that use SSL
 # This must happen before Settings, MSAL, or any Azure SDK imports
