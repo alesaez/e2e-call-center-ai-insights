@@ -439,6 +439,7 @@ interface AIFoundryPageProps {
 export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
   const theme = useTheme();
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const lastUserMessageRef = useRef<HTMLLIElement>(null);
   const location = useLocation();
   const navigate = useNavigate();
   const { refreshConversations, setCurrentConversationId: setContextConversationId } = useConversationContext();
@@ -459,9 +460,16 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [currentConversationTitle, setCurrentConversationTitle] = useState<string | null>(null);
 
-  // Auto-scroll to bottom when messages change
+  // Auto-scroll to show last user message and start of bot response
   useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // When sending (waiting for response), scroll to the last user message
+    // This allows the user to see their message and the start of the response
+    if (lastUserMessageRef.current) {
+      lastUserMessageRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } else {
+      // Fallback to bottom if no user message ref
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
   }, [messages, sending]);
 
   // Sync conversation ID with context for sidebar active state
@@ -1176,7 +1184,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
             <Box sx={{ flexGrow: 1, overflow: 'auto', p: 2 }}>
               <MessageListErrorBoundary>
                 <List>
-                {messages.map((message) => {
+                {messages.map((message, index) => {
                   // Safe message rendering with error handling
                   try {
                     if (!message || !message.id) {
@@ -1184,9 +1192,14 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
                       return null;
                     }
 
+                    // Check if this is the last user message
+                    const isLastUserMessage = message.sender === 'user' && 
+                      !messages.slice(index + 1).some(m => m.sender === 'user');
+
                     return (
                       <ListItem
                         key={message.id}
+                        ref={isLastUserMessage ? lastUserMessageRef : null}
                         sx={{
                           flexDirection: 'column',
                           alignItems: message.sender === 'user' ? 'flex-end' : 'flex-start',
