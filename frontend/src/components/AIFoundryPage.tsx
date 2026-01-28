@@ -731,6 +731,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
     setInputText('');
     setSending(true);
     setShowQuestions(false); // Hide questions after first message
+    setActiveSuggestions([]); // Clear current suggestions when user sends a message
 
     // Save user message immediately to prevent data loss
     if (conversationId) {
