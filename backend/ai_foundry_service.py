@@ -528,3 +528,92 @@ Generate {max_questions} relevant follow-up questions as a JSON array."""
         except Exception as e:
             logger.error(f"Failed to get conversation messages: {e}")
             raise
+
+    async def generate_conversation_title(
+        self,
+        user_token: str,
+        first_message: str,
+        max_length: int = 50
+    ) -> str:
+        """
+        Generate a concise, descriptive title for a conversation using Azure OpenAI.
+        
+        Args:
+            user_token: The user's access token for OBO flow
+            first_message: The first message in the conversation
+            max_length: Maximum length of the generated title
+            
+        Returns:
+            A concise title for the conversation, or the truncated first message if generation fails
+        """
+        # Fallback title in case of any issues
+        fallback_title = first_message[:max_length] + ('...' if len(first_message) > max_length else '')
+        
+        try:
+            # Check if OpenAI endpoint is configured
+            if not self.ai_foundry_settings.openai_endpoint:
+                logger.debug("OpenAI endpoint not configured, using fallback title")
+                return fallback_title
+            
+            # Get Azure AI token via OBO flow
+            azure_ai_token = self._get_azure_ai_token(user_token)
+            
+            # Create Azure OpenAI client
+            openai_client = AzureOpenAI(
+                azure_endpoint=self.ai_foundry_settings.openai_endpoint,
+                api_key=azure_ai_token,
+                api_version=self.ai_foundry_settings.openai_api_version
+            )
+            
+            # Build the prompt for title generation
+            system_prompt = """You are a helpful assistant that generates concise, descriptive titles for chat conversations.
+Given the user's first message, create a short title (3-8 words) that captures the main topic or intent.
+
+Guidelines:
+- Keep it brief and descriptive
+- Focus on the main subject or question
+- Use title case
+- Don't include quotes or special characters
+- Make it suitable for a conversation list display
+
+Return ONLY the title text, nothing else."""
+            
+            user_prompt = f"""Generate a concise title for a conversation that starts with this message:
+
+"{first_message}"
+
+Title:"""
+            
+            # Call Azure OpenAI for title generation
+            response = await asyncio.to_thread(
+                openai_client.chat.completions.create,
+                model=self.ai_foundry_settings.openai_deployment,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt}
+                ],
+                temperature=0.3,  # Lower temperature for more consistent titles
+                max_tokens=50
+            )
+            
+            # Extract the generated title
+            generated_title = response.choices[0].message.content.strip()
+            
+            # Remove any quotes that might be in the response
+            generated_title = generated_title.strip('"\'')
+            
+            # Ensure it's not too long
+            if len(generated_title) > max_length:
+                generated_title = generated_title[:max_length-3] + '...'
+            
+            # Validate we got something meaningful
+            if generated_title and len(generated_title) > 2:
+                logger.info(f"Generated conversation title: {generated_title}")
+                return generated_title
+            else:
+                logger.warning("Generated title was empty or too short, using fallback")
+                return fallback_title
+                
+        except Exception as e:
+            logger.warning(f"Failed to generate conversation title: {e}. Using fallback.")
+            return fallback_title

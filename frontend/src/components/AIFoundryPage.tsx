@@ -703,28 +703,43 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
     // Ensure we have a conversation for message persistence
     let conversationId = currentConversationId;
     
+    // Create a new conversation only if we don't have one
     if (!conversationId || forceNewConversationRef.current) {
       try {
         if (forceNewConversationRef.current) {
-          forceNewConversationRef.current = false; // Reset the flag
+          forceNewConversationRef.current = false;
         }
+        
+        // Only generate AI title for brand new conversations (no existing title)
+        // Resumed conversations already have currentConversationTitle set
+        const isBrandNewChat = !currentConversationTitle;
+        let conversationTitle = currentConversationTitle || textToSend.substring(0, 50);
+        
+        if (isBrandNewChat) {
+          try {
+            const titleResponse = await apiClient.post('/api/ai-foundry/generate-title', {
+              message: textToSend
+            });
+            if (titleResponse.data?.title) {
+              conversationTitle = titleResponse.data.title;
+            }
+          } catch {
+            // Use fallback title (already set above)
+          }
+          setCurrentConversationTitle(conversationTitle);
+        }
+        
         const newConversationResponse = await apiClient.post('/api/chat/conversations', {
-          title: textToSend.length > 50 ? textToSend.substring(0, 50) + '...' : textToSend,
+          title: conversationTitle,
           agent_id: session?.agentId
         });
         conversationId = newConversationResponse.data.id;
         setCurrentConversationId(conversationId);
-        
-        // Reset the processed flag since we now have a real conversation
         processedNewConversationRef.current = false;
-        
-        // Refresh sidebar conversation list
         refreshConversations?.();
       } catch (err: any) {
-        console.error('Failed to create conversation for message:', err);
-        console.error('Error details:', err.response?.data || err.message);
-        // Continue without persistence if conversation creation fails
-        conversationId = null; // Ensure we don't use a stale ID
+        console.error('Failed to create conversation:', err);
+        conversationId = null;
       }
     }
 
@@ -1013,6 +1028,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
     setCurrentConversationId(null);
     setCurrentConversationTitle(null);
     setShowQuestions(true);
+    setActiveSuggestions([]); // Clear suggestions from previous conversation
     setError(null);
     
     // Re-show welcome message if we have a session
@@ -1038,6 +1054,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
     try {
       setLoading(true);
       setError(null);
+      setActiveSuggestions([]); // Clear suggestions from previous conversation
       
       // Load the full conversation directly by ID
       const response = await apiClient.get(`/api/chat/conversations/${conversationId}`);

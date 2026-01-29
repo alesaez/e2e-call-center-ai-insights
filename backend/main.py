@@ -1357,6 +1357,52 @@ async def send_card_response_to_ai_foundry(
             detail=f"Failed to send card response: {str(e)}"
         )
 
+@app.post("/api/ai-foundry/generate-title")
+async def generate_conversation_title(
+    request: Dict,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    user_permissions: UserPermissions = Depends(require_permission(Permission.AI_FOUNDRY_QUERY))
+):
+    """
+    Generate a concise title for a conversation using Azure OpenAI.
+    Takes the first message and returns a descriptive title.
+    Requires: AI_FOUNDRY_QUERY permission
+    
+    Request body:
+        message: The first message in the conversation
+        
+    Returns:
+        title: Generated conversation title
+    """
+    if not ai_foundry_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Azure AI Foundry is not configured."
+        )
+    
+    message = request.get("message", "").strip()
+    if not message:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Message is required"
+        )
+    
+    try:
+        user_token = credentials.credentials
+        
+        title = await ai_foundry_service.generate_conversation_title(
+            user_token=user_token,
+            first_message=message
+        )
+        
+        return {"title": title}
+        
+    except Exception as e:
+        logger.error(f"Failed to generate conversation title: {str(e)}")
+        # Return a fallback title instead of raising an error
+        fallback_title = message[:50] + ('...' if len(message) > 50 else '')
+        return {"title": fallback_title}
+
 # ============================================================================
 # Chat History Management Endpoints
 # ============================================================================
