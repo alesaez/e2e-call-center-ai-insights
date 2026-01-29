@@ -100,6 +100,40 @@ interface MessageAttachment {
   name?: string;
 }
 
+// Helper function to format message timestamps based on age
+const formatMessageTimestamp = (timestamp: Date): string => {
+  if (!(timestamp instanceof Date) || isNaN(timestamp.getTime())) {
+    return 'Invalid time';
+  }
+
+  const now = new Date();
+  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const yesterday = new Date(today);
+  yesterday.setDate(yesterday.getDate() - 1);
+  const oneWeekAgo = new Date(today);
+  oneWeekAgo.setDate(oneWeekAgo.getDate() - 7);
+
+  const messageDate = new Date(timestamp.getFullYear(), timestamp.getMonth(), timestamp.getDate());
+
+  // Today: show time only
+  if (messageDate.getTime() === today.getTime()) {
+    return timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  // Yesterday
+  if (messageDate.getTime() === yesterday.getTime()) {
+    return 'Yesterday';
+  }
+
+  // Within the last week: show day name
+  if (messageDate.getTime() > oneWeekAgo.getTime()) {
+    return timestamp.toLocaleDateString([], { weekday: 'long' });
+  }
+
+  // Older than a week: show full date
+  return timestamp.toLocaleDateString([], { month: 'long', day: 'numeric', year: 'numeric' });
+};
+
 // Markdown renderer component with custom styling
 const MarkdownMessage = ({ text, isUser }: { text: string; isUser: boolean }) => {
   const theme = useTheme();
@@ -1278,9 +1312,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
                           })}
                         </Box>
                         <Typography variant="caption" sx={{ opacity: 0.7, mt: 1, display: 'block' }}>
-                          {message.timestamp instanceof Date && !isNaN(message.timestamp.getTime()) 
-                            ? message.timestamp.toLocaleTimeString() 
-                            : 'Invalid time'}
+                          {formatMessageTimestamp(message.timestamp)}
                         </Typography>
                       </Paper>
                     </Box>
