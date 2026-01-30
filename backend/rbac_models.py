@@ -132,6 +132,8 @@ BUILT_IN_ROLES: Dict[str, RoleDefinition] = {
         permissions=[
             Permission.DASHBOARD_VIEW,
             Permission.CHAT_VIEW,
+            Permission.CHAT_CREATE,
+            Permission.CHAT_DELETE,
             Permission.POWERBI_VIEW,
             Permission.TEMPLATES_VIEW,
             Permission.AI_FOUNDRY_QUERY,
