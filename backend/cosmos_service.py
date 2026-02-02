@@ -388,6 +388,44 @@ class CosmosDBService:
         except Exception as e:
             logger.error(f"Failed to get messages for session {session_id}: {e}")
             return []
+
+    async def update_message_feedback(
+        self,
+        session_id: str,
+        message_id: str,
+        feedback: Optional[str]  # 'positive', 'negative', or None
+    ) -> bool:
+        """Update the feedback field for a specific message."""
+        await self.initialize()
+        
+        if not self.messages_container:
+            return False
+        
+        try:
+            # Read the message
+            message_item = await self.messages_container.read_item(
+                item=message_id,
+                partition_key=session_id
+            )
+            
+            # Update feedback field
+            message_item['feedback'] = feedback
+            
+            # Replace the message
+            await self.messages_container.replace_item(
+                item=message_id,
+                body=message_item
+            )
+            
+            logger.info(f"Updated feedback for message {message_id} to {feedback}")
+            return True
+            
+        except exceptions.CosmosResourceNotFoundError:
+            logger.warning(f"Message {message_id} not found in session {session_id}")
+            return False
+        except Exception as e:
+            logger.error(f"Failed to update feedback for message {message_id}: {e}")
+            return False
     
     async def add_message_to_session(
         self, 
@@ -400,12 +438,16 @@ class CosmosDBService:
         tool_calls: Optional[List] = None,
         vector: Optional[List[float]] = None,
         grounding: Optional[dict] = None
-    ) -> bool:
-        """Add a message to a session in the Messages container."""
+    ) -> Optional[str]:
+        """Add a message to a session in the Messages container.
+        
+        Returns:
+            The created message ID if successful, None otherwise.
+        """
         await self.initialize()
         
         if not self.messages_container or not self.sessions_container:
-            return False
+            return None
         
         try:
             # Verify session exists and belongs to user
@@ -416,9 +458,9 @@ class CosmosDBService:
                 )
             except exceptions.CosmosResourceNotFoundError:
                 logger.warning(f"Session {session_id} not found for user {user_id}")
-                return False
+                return None
             
-            # Create new message
+            # Create new message with generated ID
             message_id = f"msg_{uuid.uuid4().hex[:12]}"
             now = datetime.utcnow()
             
@@ -447,11 +489,11 @@ class CosmosDBService:
             # Update session's lastActiveAt and title if needed
             await self._update_session_activity(session_id, user_id, content, role)
             
-            return True
+            return message_id
             
         except Exception as e:
             logger.error(f"Failed to add message to session {session_id}: {e}")
-            return False
+            return None
 
     async def add_message_to_conversation(
         self, 

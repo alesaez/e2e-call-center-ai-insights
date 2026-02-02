@@ -823,8 +823,8 @@ export default function ChatbotPage({ uiConfig: _uiConfig }: ChatbotPageProps) {
   // Chat History Functions
 
 
-  // Robust message saving with retry logic
-  const saveMessageWithRetry = async (conversationId: string, message: Message, maxRetries = 3) => {
+  // Robust message saving with retry logic - returns the server-assigned message ID
+  const saveMessageWithRetry = async (conversationId: string, message: Message, maxRetries = 3): Promise<string | null> => {
     // Prepare payload outside try block for error logging
     const transformedAttachments = (message.attachments || []).map(attachment => {
       // For annotation attachments, keep structure as-is (already has content object)
@@ -861,9 +861,18 @@ export default function ChatbotPage({ uiConfig: _uiConfig }: ChatbotPageProps) {
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const response = await apiClient.post(`/api/chat/conversations/${conversationId}/messages`, payload);
-        console.log(`Message saved successfully. Status: ${response.status}`);
-        return true;
+        const response = await apiClient.post<{ success: boolean; message: string; messageId: string }>(`/api/chat/conversations/${conversationId}/messages`, payload);
+        console.log(`Message saved successfully. Status: ${response.status}, Server ID: ${response.data.messageId}`);
+        
+        // Update the message's ID with the server-assigned ID
+        const serverMessageId = response.data.messageId;
+        if (serverMessageId && serverMessageId !== message.id) {
+          setMessages(prev => prev.map(m => 
+            m.id === message.id ? { ...m, id: serverMessageId } : m
+          ));
+        }
+        
+        return serverMessageId;
       } catch (error: any) {
         console.error(`Attempt ${attempt}/${maxRetries} failed to save message to conversation ${conversationId}:`, {
           status: error.response?.status,
@@ -877,13 +886,13 @@ export default function ChatbotPage({ uiConfig: _uiConfig }: ChatbotPageProps) {
         if (attempt === maxRetries) {
           // Store failed message for later retry
           console.error('Failed to save message after all retries:', error);
-          return false;
+          return null;
         }
         // Wait before retrying (exponential backoff)
         await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
       }
     }
-    return false;
+    return null;
   };
 
   // Sync local messages with Cosmos DB (optional - for data integrity)

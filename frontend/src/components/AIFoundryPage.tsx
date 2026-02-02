@@ -27,6 +27,12 @@ import {
   SmartToy as BotIcon,
   Person as PersonIcon,
   QuestionMark as QuestionIcon,
+  ContentCopy as CopyIcon,
+  Edit as EditIcon,
+  ThumbUp as ThumbUpIcon,
+  ThumbDown as ThumbDownIcon,
+  ThumbUpOutlined as ThumbUpOutlinedIcon,
+  ThumbDownOutlined as ThumbDownOutlinedIcon,
 } from '@mui/icons-material';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -92,6 +98,7 @@ interface Message {
   timestamp: Date;
   attachments?: MessageAttachment[];
   suggestedQuestions?: string[]; // Follow-up questions suggested by the bot
+  feedback?: 'positive' | 'negative' | null; // User feedback for bot messages
 }
 
 interface MessageAttachment {
@@ -487,6 +494,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
   const [sending, setSending] = useState(false);
   const [showQuestions, setShowQuestions] = useState(true);
   const [activeSuggestions, setActiveSuggestions] = useState<string[]>([]);
+  const [hoveredMessageId, setHoveredMessageId] = useState<string | null>(null);
   
   // Chat history state (managed by sidebar now, but we still need conversations for navigation handling)
 
@@ -494,16 +502,61 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
   const [currentConversationId, setCurrentConversationId] = useState<string | null>(null);
   const [currentConversationTitle, setCurrentConversationTitle] = useState<string | null>(null);
 
+  // Message action handlers
+  const handleCopyMessage = async (text: string) => {
+    try {
+      await navigator.clipboard.writeText(text);
+      // Could add a toast notification here
+    } catch (err) {
+      console.error('Failed to copy message:', err);
+    }
+  };
+
+  const handleEditMessage = (text: string) => {
+    setInputText(text);
+  };
+
+  const handleMessageFeedback = async (messageId: string, feedback: 'positive' | 'negative' | null) => {
+    if (!currentConversationId) return;
+    
+    try {
+      // Find the current message to check existing feedback
+      const currentMessage = messages.find(m => m.id === messageId);
+      const currentFeedback = currentMessage?.feedback;
+      
+      // If clicking the same feedback that's already set, toggle it off
+      const newFeedback = currentFeedback === feedback ? null : feedback;
+      
+      await apiClient.patch(`/api/chat/conversations/${currentConversationId}/messages/${messageId}/feedback`, {
+        feedback: newFeedback
+      });
+      
+      // Update local state
+      setMessages(prev => prev.map(msg => 
+        msg.id === messageId ? { ...msg, feedback: newFeedback } : msg
+      ));
+    } catch (err) {
+      console.error('Failed to update feedback:', err);
+    }
+  };
+
+  // Track message count to detect new messages vs updates
+  const prevMessageCountRef = useRef(0);
+
   // Auto-scroll to show last user message and start of bot response
   useEffect(() => {
-    // When sending (waiting for response), scroll to the last user message
-    // This allows the user to see their message and the start of the response
-    if (lastUserMessageRef.current) {
-      lastUserMessageRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    } else {
-      // Fallback to bottom if no user message ref
-      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    // Only scroll when new messages are added, not when existing messages are updated (like feedback)
+    if (messages.length > prevMessageCountRef.current) {
+      // When sending (waiting for response), scroll to the last user message
+      // This allows the user to see their message and the start of the response
+      if (lastUserMessageRef.current) {
+        lastUserMessageRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      } else {
+        // Fallback to bottom if no user message ref
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+      }
     }
+    prevMessageCountRef.current = messages.length;
   }, [messages, sending]);
 
   // Sync conversation ID with context for sidebar active state
@@ -938,8 +991,8 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
   // Chat History Functions
 
 
-  // Robust message saving with retry logic
-  const saveMessageWithRetry = async (conversationId: string, message: Message, maxRetries = 3) => {
+  // Robust message saving with retry logic - returns the server-assigned message ID
+  const saveMessageWithRetry = async (conversationId: string, message: Message, maxRetries = 3): Promise<string | null> => {
     // Prepare payload outside try block for error logging
     const transformedAttachments = (message.attachments || []).map(attachment => {
       // For annotation attachments, keep structure as-is (already has content object)
@@ -976,9 +1029,18 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
     
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        const response = await apiClient.post(`/api/chat/conversations/${conversationId}/messages`, payload);
-        console.log(`Message saved successfully. Status: ${response.status}`);
-        return true;
+        const response = await apiClient.post<{ success: boolean; message: string; messageId: string }>(`/api/chat/conversations/${conversationId}/messages`, payload);
+        console.log(`Message saved successfully. Status: ${response.status}, Server ID: ${response.data.messageId}`);
+        
+        // Update the message's ID with the server-assigned ID
+        const serverMessageId = response.data.messageId;
+        if (serverMessageId && serverMessageId !== message.id) {
+          setMessages(prev => prev.map(m => 
+            m.id === message.id ? { ...m, id: serverMessageId } : m
+          ));
+        }
+        
+        return serverMessageId;
       } catch (error: any) {
         console.error(`Attempt ${attempt}/${maxRetries} failed to save message to conversation ${conversationId}:`, {
           status: error.response?.status,
@@ -992,13 +1054,13 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
         if (attempt === maxRetries) {
           // Store failed message for later retry
           console.error('Failed to save message after all retries:', error);
-          return false;
+          return null;
         }
         // Wait before retrying (exponential backoff)
         await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
       }
     }
-    return false;
+    return null;
   };
 
   // Sync local messages with Cosmos DB (optional - for data integrity)
@@ -1037,7 +1099,8 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
           sender: (msg.sender || (msg.role === 'user' ? 'user' : 'bot')) as 'user' | 'bot',
           timestamp: msg.timestamp ? new Date(msg.timestamp) : 
                     msg.createdAt ? new Date(msg.createdAt) : 
-                    new Date()
+                    new Date(),
+          feedback: msg.feedback || null,
         }));
         
         setMessages(safeMessages);
@@ -1051,7 +1114,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
     // Reset the processed flag to allow the new conversation request
     processedNewConversationRef.current = false;
     // Use the same navigation approach as the left menu
-    navigate('/chatbot', { state: { newConversation: true }, replace: true });
+    navigate('/ai-foundry', { state: { newConversation: true }, replace: true });
   };
 
   const resetToNewConversation = () => {
@@ -1106,6 +1169,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
                       msg.createdAt ? new Date(msg.createdAt) : 
                       new Date(),
             attachments: msg.attachments || [],
+            feedback: msg.feedback || null,
           };
         } catch (error) {
           console.error('❌ Failed to convert message:', msg, error);
@@ -1246,11 +1310,17 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
                     // Check if this is the last user message
                     const isLastUserMessage = message.sender === 'user' && 
                       !messages.slice(index + 1).some(m => m.sender === 'user');
+                    
+                    // Skip welcome message for hover actions
+                    const isWelcomeMessage = message.id === 'welcome';
+                    const showHoverActions = hoveredMessageId === message.id && !isWelcomeMessage;
 
                     return (
                       <ListItem
                         key={message.id}
                         ref={isLastUserMessage ? lastUserMessageRef : null}
+                        onMouseEnter={() => setHoveredMessageId(message.id)}
+                        onMouseLeave={() => setHoveredMessageId(null)}
                         sx={{
                           flexDirection: 'column',
                           alignItems: message.sender === 'user' ? 'flex-end' : 'flex-start',
@@ -1276,45 +1346,152 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
                         {message.sender === 'user' ? <PersonIcon /> : <BotIcon />}
                       </Avatar>
                       
-                      <Paper
-                        sx={{
-                          p: 2,
-                          bgcolor: message.sender === 'user' 
-                            ? theme.palette.primary.main 
-                            : theme.palette.grey[100],
-                          color: message.sender === 'user' 
-                            ? theme.palette.primary.contrastText 
-                            : theme.palette.text.primary,
-                        }}
-                      >
-                        <Box sx={{ wordBreak: 'break-word' }}>
-                          {/* Render text content if available */}
-                          {message.text && (
-                            <MarkdownMessage 
-                              text={message.text} 
-                              isUser={message.sender === 'user'}
-                            />
+                      <Box sx={{ display: 'flex', flexDirection: 'column', alignItems: message.sender === 'user' ? 'flex-end' : 'flex-start' }}>
+                        <Paper
+                          sx={{
+                            p: 2,
+                            bgcolor: message.sender === 'user' 
+                              ? theme.palette.primary.main 
+                              : theme.palette.grey[100],
+                            color: message.sender === 'user' 
+                              ? theme.palette.primary.contrastText 
+                              : theme.palette.text.primary,
+                          }}
+                        >
+                          <Box sx={{ wordBreak: 'break-word' }}>
+                            {/* Render text content if available */}
+                            {message.text && (
+                              <MarkdownMessage 
+                                text={message.text} 
+                                isUser={message.sender === 'user'}
+                              />
+                            )}
+                            
+                            {/* Render Adaptive Cards if available */}
+                            {message.attachments?.map((attachment, attachIdx) => {
+                              if (attachment.contentType === 'application/vnd.microsoft.card.adaptive') {
+                                return (
+                                  <Box key={attachIdx} sx={{ mt: message.text ? 1 : 0 }}>
+                                    <AdaptiveCardRenderer
+                                      card={attachment.content}
+                                      onAction={handleAdaptiveCardAction}
+                                    />
+                                  </Box>
+                                );
+                              }
+                              return null;
+                            })}
+                          </Box>
+                          <Typography variant="caption" sx={{ opacity: 0.7, mt: 1, display: 'block' }}>
+                            {formatMessageTimestamp(message.timestamp)}
+                          </Typography>
+                        </Paper>
+                        
+                        {/* Hover action buttons */}
+                        <Box
+                          sx={{
+                            display: 'flex',
+                            gap: 0.5,
+                            mt: 0.5,
+                            opacity: showHoverActions ? 1 : 0,
+                            transition: 'opacity 0.2s',
+                            visibility: showHoverActions ? 'visible' : 'hidden',
+                          }}
+                        >
+                          {message.sender === 'user' ? (
+                            // User message actions: Copy, Edit
+                            <>
+                              <Tooltip title="Copy message">
+                                <IconButton
+                                  size="small"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCopyMessage(message.text);
+                                  }}
+                                  sx={{ 
+                                    color: 'text.secondary',
+                                    '&:hover': { color: 'primary.main' }
+                                  }}
+                                >
+                                  <CopyIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="Edit and resend">
+                                <IconButton
+                                  size="small"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleEditMessage(message.text);
+                                  }}
+                                  sx={{ 
+                                    color: 'text.secondary',
+                                    '&:hover': { color: 'primary.main' }
+                                  }}
+                                >
+                                  <EditIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                            </>
+                          ) : (
+                            // Bot message actions: Copy, Thumbs Up, Thumbs Down
+                            <>
+                              <Tooltip title="Copy message">
+                                <IconButton
+                                  size="small"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleCopyMessage(message.text);
+                                  }}
+                                  sx={{ 
+                                    color: 'text.secondary',
+                                    '&:hover': { color: 'primary.main' }
+                                  }}
+                                >
+                                  <CopyIcon fontSize="small" />
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="I like this response">
+                                <IconButton
+                                  size="small"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleMessageFeedback(message.id, 'positive');
+                                  }}
+                                  sx={{ 
+                                    color: message.feedback === 'positive' ? 'success.main' : 'text.secondary',
+                                    '&:hover': { color: 'success.main' }
+                                  }}
+                                >
+                                  {message.feedback === 'positive' ? (
+                                    <ThumbUpIcon fontSize="small" />
+                                  ) : (
+                                    <ThumbUpOutlinedIcon fontSize="small" />
+                                  )}
+                                </IconButton>
+                              </Tooltip>
+                              <Tooltip title="I don't like this response">
+                                <IconButton
+                                  size="small"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleMessageFeedback(message.id, 'negative');
+                                  }}
+                                  sx={{ 
+                                    color: message.feedback === 'negative' ? 'error.main' : 'text.secondary',
+                                    '&:hover': { color: 'error.main' }
+                                  }}
+                                >
+                                  {message.feedback === 'negative' ? (
+                                    <ThumbDownIcon fontSize="small" />
+                                  ) : (
+                                    <ThumbDownOutlinedIcon fontSize="small" />
+                                  )}
+                                </IconButton>
+                              </Tooltip>
+                            </>
                           )}
-                          
-                          {/* Render Adaptive Cards if available */}
-                          {message.attachments?.map((attachment, index) => {
-                            if (attachment.contentType === 'application/vnd.microsoft.card.adaptive') {
-                              return (
-                                <Box key={index} sx={{ mt: message.text ? 1 : 0 }}>
-                                  <AdaptiveCardRenderer
-                                    card={attachment.content}
-                                    onAction={handleAdaptiveCardAction}
-                                  />
-                                </Box>
-                              );
-                            }
-                            return null;
-                          })}
                         </Box>
-                        <Typography variant="caption" sx={{ opacity: 0.7, mt: 1, display: 'block' }}>
-                          {formatMessageTimestamp(message.timestamp)}
-                        </Typography>
-                      </Paper>
+                      </Box>
                     </Box>
                   </ListItem>
                     );

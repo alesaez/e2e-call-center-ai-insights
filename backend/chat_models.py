@@ -72,6 +72,11 @@ class ChatSession(BaseModel):
     user_name: Optional[str] = None  # User's display name
     is_active: bool = True
 
+class MessageFeedback(str, Enum):
+    """Feedback types for messages."""
+    POSITIVE = "positive"  # Thumbs up
+    NEGATIVE = "negative"  # Thumbs down
+
 class ChatMessage(BaseModel):
     """Individual chat message model stored in Messages container."""
     model_config = ConfigDict(
@@ -91,6 +96,7 @@ class ChatMessage(BaseModel):
     toolCalls: Optional[List[ToolCall]] = None
     vector: Optional[List[float]] = None  # Embedding for semantic cache
     grounding: Optional[MessageGrounding] = None
+    feedback: Optional[MessageFeedback] = None  # User feedback (thumbs up/down)
     
     # Legacy compatibility fields
     text: Optional[str] = None  # Alias for content

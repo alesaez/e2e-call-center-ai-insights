@@ -259,14 +259,16 @@ class AIFoundryService:
                         {"role": "user", "content": message_text},
                         {"role": "assistant", "content": response_text}
                     ]
-                    
                     # Get recent messages for better context (optional, for richer suggestions)
                     try:
+                        # Get latest 6 messages from the current conversation from Cosmos
+                        
                         recent_messages = await self.get_conversation_messages(
                             conversation_id=conversation_id,
                             user_token=user_token,
                             limit=6
                         )
+
                         # Convert to simpler format and reverse (oldest first)
                         for msg in reversed(recent_messages[2:]):  # Skip the two we just added
                             if msg.get("content"):
@@ -281,7 +283,7 @@ class AIFoundryService:
                     suggested_questions = await self.generate_follow_up_questions(
                         conversation_history=conversation_history,
                         user_token=user_token,
-                        max_questions=5
+                        max_questions=3
                     )
                 except Exception as e:
                     logger.warning(f"Failed to generate follow-up questions: {e}")
@@ -387,23 +389,34 @@ class AIFoundryService:
             recent_messages = conversation_history[-6:] if len(conversation_history) > 6 else conversation_history
             
             # Build the system prompt for question generation
-            system_prompt = f"""You are a helpful assistant that suggests follow-up questions for a call center analytics chatbot.
-Based on the conversation history, generate {max_questions} short, relevant questions the user might ask next.
+            system_prompt = f"""You are a helpful assistant that suggests relevant follow-up questions based on an ongoing conversation between a user and an AI assistant.
+Using the provided conversation history ordered newest-to-oldest (the first message is the most recent, including the last assistant response), generate {max_questions} short, relevant questions that the user might logically ask next.
+Priority Rule (Critical):
+- First, inspect the last assistant message for any explicit or implied follow-up suggestions (e.g., requests for charts, deeper analysis, comparisons, or strategies).
+- Convert those suggestions into user-phrased questions and prioritize them in the output.
+- If additional questions are needed, infer them from the broader conversation context.
 
 Focus on:
-- Call center metrics (volume, duration, wait times, resolution rates)
-- Agent performance (productivity, customer satisfaction, call handling)
-- Customer insights (satisfaction scores, feedback trends, pain points)
-- Trends and patterns (time-based analysis, comparisons)
-- Actionable insights and recommendations
+- Key metrics or measures discussed
+- Performance, quality, or effectiveness of entities involved
+- Insights, rankings, patterns, or trends implied
+- Comparisons, breakdowns, or deeper exploration
+- Visualization opportunities and data gaps
+- Actionable next steps or recommendations
 
 Guidelines:
 - Keep questions concise (5-12 words)
-- Make them specific and actionable
-- Vary the question types (metrics, comparisons, trends, details)
-- Ensure relevance to the current conversation context
+- Ensure questions are specific, relevant, and actionable
+- Vary question types (metrics, comparisons, trends, clarifications, next actions)
+- Infer domain and terminology from context; do not assume a fixed use case
+- Avoid repeating questions already answered
+- Prioritize questions that naturally advance the conversation
 
-Return ONLY a JSON array of question strings, nothing else. Example:
+Output Requirements:
+- Return ONLY a JSON array of question strings
+- No explanations, headings, or additional text
+
+Example Output:
 ["What is the average call duration?", "Show me agent performance trends", "Which issues cause the most customer complaints?"]"""
             
             # Build conversation context

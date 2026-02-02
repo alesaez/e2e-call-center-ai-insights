@@ -10,6 +10,7 @@ from chat_models import (
     ConversationSummary,
     ChatMessage,
     MessageRole,
+    MessageFeedback,
     CreateConversationRequest,
     AddMessageRequest
 )
@@ -227,7 +228,7 @@ class ConversationService:
         role: str = "user",
         attachments: Optional[List] = None,
         metadata: Optional[dict] = None
-    ) -> bool:
+    ) -> Optional[str]:
         """
         Add a message to a conversation.
         
@@ -240,7 +241,7 @@ class ConversationService:
             metadata: Optional additional metadata (tokens, tool calls, etc.)
             
         Returns:
-            True if successful, False otherwise
+            The created message ID if successful, None otherwise
         """
         if self.cosmos_service:
             try:
@@ -250,7 +251,7 @@ class ConversationService:
                 vector = metadata.get("vector") if metadata else None
                 grounding = metadata.get("grounding") if metadata else None
                 
-                success = await self.cosmos_service.add_message_to_session(
+                created_message_id = await self.cosmos_service.add_message_to_session(
                     session_id=conversation_id,
                     user_id=user_id,
                     content=content,
@@ -262,9 +263,9 @@ class ConversationService:
                     grounding=grounding
                 )
                 
-                if success:
-                    logger.info(f"Added message to conversation {conversation_id} in Cosmos")
-                    return True
+                if created_message_id:
+                    logger.info(f"Added message {created_message_id} to conversation {conversation_id} in Cosmos")
+                    return created_message_id
                     
             except Exception as e:
                 logger.error(f"Failed to add message to Cosmos: {e}")
@@ -273,8 +274,9 @@ class ConversationService:
         # Fallback to in-memory store
         conversation = self._in_memory_store.get(conversation_id)
         if conversation and conversation.user_id == user_id:
+            generated_message_id = f"msg_{uuid.uuid4().hex[:12]}"
             message = ChatMessage(
-                id=f"msg_{uuid.uuid4().hex[:12]}",
+                id=generated_message_id,
                 sessionId=conversation_id,
                 role=MessageRole(role),
                 content=content,
@@ -289,8 +291,50 @@ class ConversationService:
             conversation.messages.append(message)
             conversation.updated_at = datetime.utcnow()
             
-            logger.info(f"Added message to conversation {conversation_id} in memory")
-            return True
+            logger.info(f"Added message {generated_message_id} to conversation {conversation_id} in memory")
+            return generated_message_id
+        
+        return None
+    
+    async def update_message_feedback(
+        self,
+        session_id: str,
+        message_id: str,
+        feedback: Optional[str]
+    ) -> bool:
+        """
+        Update the feedback (thumbs up/down) for a specific message.
+        
+        Args:
+            session_id: Session/conversation identifier
+            message_id: Message identifier
+            feedback: 'positive', 'negative', or None to clear
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.cosmos_service:
+            try:
+                success = await self.cosmos_service.update_message_feedback(
+                    session_id=session_id,
+                    message_id=message_id,
+                    feedback=feedback
+                )
+                if success:
+                    logger.info(f"Updated feedback for message {message_id} to {feedback}")
+                    return True
+                    
+            except Exception as e:
+                logger.error(f"Failed to update message feedback in Cosmos: {e}")
+        
+        # Fallback to in-memory store
+        conversation = self._in_memory_store.get(session_id)
+        if conversation:
+            for msg in conversation.messages:
+                if msg.id == message_id:
+                    msg.feedback = MessageFeedback(feedback) if feedback else None
+                    logger.info(f"Updated feedback for message {message_id} to {feedback} in memory")
+                    return True
         
         return False
     

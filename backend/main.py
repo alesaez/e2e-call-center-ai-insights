@@ -44,6 +44,7 @@ else:
 from fastapi import FastAPI, Depends, HTTPException, status, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+from pydantic import BaseModel
 from typing import Optional, Dict, List
 import httpx
 import logging
@@ -1586,7 +1587,7 @@ async def add_message(
         )
     
     try:
-        success = await conversation_service.add_message(
+        created_message_id = await conversation_service.add_message(
             conversation_id=conversation_id,
             user_id=user_id,
             content=message.content,
@@ -1600,13 +1601,13 @@ async def add_message(
             }
         )
         
-        if not success:
+        if not created_message_id:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="Conversation not found or message could not be added"
             )
         
-        return {"success": True, "message": "Message added successfully"}
+        return {"success": True, "message": "Message added successfully", "messageId": created_message_id}
     except HTTPException:
         raise
     except Exception as e:
@@ -1614,6 +1615,64 @@ async def add_message(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to add message"
+        )
+
+class MessageFeedbackRequest(BaseModel):
+    """Request model for updating message feedback."""
+    feedback: Optional[str] = None  # 'positive', 'negative', or null to clear
+
+@app.patch("/api/chat/conversations/{conversation_id}/messages/{message_id}/feedback")
+async def update_message_feedback(
+    conversation_id: str,
+    message_id: str,
+    request: MessageFeedbackRequest,
+    user_permissions: UserPermissions = Depends(require_permission(Permission.CHAT_CREATE))
+):
+    """
+    Update the feedback (thumbs up/down) for a specific message.
+    Requires: CHAT_CREATE permission
+    """
+    if not conversation_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Chat history service is not available."
+        )
+    
+    user_id = user_permissions.user_id
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User ID not found in token"
+        )
+    
+    # Validate feedback value
+    if request.feedback is not None and request.feedback not in ['positive', 'negative']:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Feedback must be 'positive', 'negative', or null"
+        )
+    
+    try:
+        success = await conversation_service.update_message_feedback(
+            session_id=conversation_id,
+            message_id=message_id,
+            feedback=request.feedback
+        )
+        
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Message not found"
+            )
+        
+        return {"success": True, "message": "Feedback updated successfully", "feedback": request.feedback}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update feedback for message {message_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update feedback"
         )
 
 @app.delete("/api/chat/conversations/{conversation_id}")
