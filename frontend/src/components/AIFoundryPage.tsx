@@ -503,9 +503,17 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
   const [currentConversationTitle, setCurrentConversationTitle] = useState<string | null>(null);
 
   // Message action handlers
-  const handleCopyMessage = async (text: string) => {
+  const handleCopyMessage = async (text: string, messageId: string) => {
     try {
-      await navigator.clipboard.writeText(text);
+      // Find the rendered message content element and copy its text (preserves formatting without markdown)
+      const messageElement = document.querySelector(`[data-message-id="${messageId}"] .message-content`) as HTMLElement | null;
+      if (messageElement) {
+        const plainText = messageElement.innerText || messageElement.textContent || text;
+        await navigator.clipboard.writeText(plainText);
+      } else {
+        // Fallback to raw text if element not found
+        await navigator.clipboard.writeText(text);
+      }
       // Could add a toast notification here
     } catch (err) {
       console.error('Failed to copy message:', err);
@@ -1318,6 +1326,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
                     return (
                       <ListItem
                         key={message.id}
+                        data-message-id={message.id}
                         ref={isLastUserMessage ? lastUserMessageRef : null}
                         onMouseEnter={() => setHoveredMessageId(message.id)}
                         onMouseLeave={() => setHoveredMessageId(null)}
@@ -1358,7 +1367,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
                               : theme.palette.text.primary,
                           }}
                         >
-                          <Box sx={{ wordBreak: 'break-word' }}>
+                          <Box className="message-content" sx={{ wordBreak: 'break-word' }}>
                             {/* Render text content if available */}
                             {message.text && (
                               <MarkdownMessage 
@@ -1406,7 +1415,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
                                   size="small"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleCopyMessage(message.text);
+                                    handleCopyMessage(message.text, message.id);
                                   }}
                                   sx={{ 
                                     color: 'text.secondary',
@@ -1440,7 +1449,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
                                   size="small"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleCopyMessage(message.text);
+                                    handleCopyMessage(message.text, message.id);
                                   }}
                                   sx={{ 
                                     color: 'text.secondary',
