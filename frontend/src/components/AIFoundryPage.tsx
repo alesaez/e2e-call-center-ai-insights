@@ -1288,16 +1288,9 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
 
         {error && (
           <Box sx={{ p: 3 }}>
-            <Alert severity="error" sx={{ mb: 2 }}>
+            <Alert severity="error">
               {error}
             </Alert>
-            <Typography variant="body2" color="text.secondary">
-              <strong>Configuration Status:</strong>
-            </Typography>
-            <ul style={{ marginTop: '8px' }}>
-              <li>Using Environment ID and Schema Name (Direct Connect)</li>
-              <li>Backend endpoint: /api/copilot-studio/token</li>
-            </ul>
           </Box>
         )}
 
