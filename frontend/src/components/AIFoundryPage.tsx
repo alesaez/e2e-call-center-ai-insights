@@ -105,6 +105,11 @@ interface MessageAttachment {
   contentType: string;
   content?: any;
   name?: string;
+  url?: string;      // For url_citation type
+  title?: string;    // For url_citation type
+  text?: string;     // Original annotation text
+  fileId?: string;   // For file_citation type
+  quote?: string;    // For file_citation type
 }
 
 // Helper function to format message timestamps based on age
@@ -1383,6 +1388,52 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
                               }
                               return null;
                             })}
+                            
+                            {/* Render URL Citations (e.g., from Fabric Data Agent) */}
+                            {message.attachments?.some(a => a.contentType === 'url_citation') && (
+                              <Box sx={{ 
+                                mt: 1.5, 
+                                pt: 1, 
+                                borderTop: '1px solid',
+                                borderColor: 'divider'
+                              }}>
+                                <Typography variant="caption" sx={{ color: 'text.secondary', display: 'block', mb: 0.5 }}>
+                                  Sources:
+                                </Typography>
+                                {message.attachments
+                                  .filter(a => a.contentType === 'url_citation')
+                                  .map((citation, citIdx) => (
+                                    <Box 
+                                      key={citIdx}
+                                      component="a"
+                                      href={citation.url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      sx={{
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        gap: 0.5,
+                                        mr: 1,
+                                        mb: 0.5,
+                                        px: 1,
+                                        py: 0.5,
+                                        borderRadius: 1,
+                                        bgcolor: 'action.hover',
+                                        color: 'primary.main',
+                                        textDecoration: 'none',
+                                        fontSize: '0.75rem',
+                                        '&:hover': {
+                                          bgcolor: 'action.selected',
+                                          textDecoration: 'underline'
+                                        }
+                                      }}
+                                    >
+                                      <span>🔗</span>
+                                      {citation.title || citation.name || 'Source'}
+                                    </Box>
+                                  ))}
+                              </Box>
+                            )}
                           </Box>
                           <Typography variant="caption" sx={{ opacity: 0.7, mt: 1, display: 'block' }}>
                             {formatMessageTimestamp(message.timestamp)}

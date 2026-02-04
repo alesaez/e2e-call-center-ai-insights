@@ -223,28 +223,64 @@ class AIFoundryService:
                 # Extract the assistant's response (most recent message)
                 # messages is an ItemPaged iterator, convert to list
                 messages_list = list(messages)
+                
                 if messages_list and len(messages_list) > 0:
                     # Find the first assistant message
                     for message in messages_list:
                         if message.role == "assistant":
-                            # Extract text content
+                            # Extract content from each content item
                             for content in message.content:
                                 # Check if content has text attribute (duck typing)
-                                if hasattr(content, 'text') and hasattr(content.text, 'value'):
-                                    response_text = content.text.value
+                                if hasattr(content, 'text'):
+                                    if hasattr(content.text, 'value'):
+                                        response_text = content.text.value
                                     
                                     # Check for annotations (files, citations)
-                                    if hasattr(content.text, 'annotations') and content.text.annotations:
-                                        for annotation in content.text.annotations:
-                                            attachments.append({
-                                                "contentType": "annotation",
-                                                "content": annotation,
-                                                "name": getattr(annotation, 'text', 'Annotation')
-                                            })
+                                    if hasattr(content.text, 'annotations'):
+                                        annotations = content.text.annotations
+                                        if annotations:
+                                            for annotation in annotations:
+                                                # Extract url_citation for Fabric Data Agent
+                                                if hasattr(annotation, 'url_citation') and annotation.url_citation:
+                                                    url_citation = annotation.url_citation
+                                                    citation_url = url_citation.get('url') if isinstance(url_citation, dict) else getattr(url_citation, 'url', None)
+                                                    citation_title = url_citation.get('title') if isinstance(url_citation, dict) else getattr(url_citation, 'title', 'Source')
+                                                    
+                                                    attachments.append({
+                                                        "contentType": "url_citation",
+                                                        "url": citation_url,
+                                                        "title": citation_title,
+                                                        "name": citation_title or "Source",
+                                                        "text": getattr(annotation, 'text', '')
+                                                    })
+                                                # Extract file_citation for file-based sources
+                                                elif hasattr(annotation, 'file_citation') and annotation.file_citation:
+                                                    file_citation = annotation.file_citation
+                                                    file_id = file_citation.get('file_id') if isinstance(file_citation, dict) else getattr(file_citation, 'file_id', None)
+                                                    quote = file_citation.get('quote') if isinstance(file_citation, dict) else getattr(file_citation, 'quote', '')
+                                                    
+                                                    attachments.append({
+                                                        "contentType": "file_citation",
+                                                        "fileId": file_id,
+                                                        "quote": quote,
+                                                        "name": "File Source",
+                                                        "text": getattr(annotation, 'text', '')
+                                                    })
+                                                # Fallback for other annotation types
+                                                else:
+                                                    attachments.append({
+                                                        "contentType": "annotation",
+                                                        "name": getattr(annotation, 'text', 'Annotation'),
+                                                        "text": getattr(annotation, 'text', '')
+                                                    })
+                            
                             break
+                else:
+                    logger.warning(f"No messages found in thread after run completed")
                 
                 # If no response was collected, use a default message
                 if not response_text:
+                    logger.warning(f"No assistant response text extracted, using fallback")
                     response_text = "I received your message."
                 
                 # Process response for visualizations if visualization service is available
