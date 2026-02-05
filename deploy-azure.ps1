@@ -1541,7 +1541,7 @@ if (-not $InfraOnly) {
             --name $BackendAppName `
             --resource-group $ResourceGroup `
             --allowed-origins $frontendUrl `
-            --allowed-methods GET POST PUT DELETE OPTIONS `
+            --allowed-methods GET POST PUT DELETE OPTIONS PATCH `
             --allowed-headers "*" `
             --expose-headers "*" `
             --max-age 3600
