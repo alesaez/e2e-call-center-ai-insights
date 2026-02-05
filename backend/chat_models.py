@@ -25,6 +25,8 @@ class AttachmentKind(str, Enum):
     DOCUMENT = "document"
     ANNOTATION = "annotation"  # For citations/references
     VISUALIZATION = "visualization"  # For generated charts/plots
+    URL_CITATION = "url_citation"  # For URL-based citations (e.g., Fabric Data Agent)
+    FILE_CITATION = "file_citation"  # For file-based citations
 
 class MessageAttachment(BaseModel):
     """Message attachment model."""
@@ -35,6 +37,11 @@ class MessageAttachment(BaseModel):
     contentType: Optional[str] = None  # MIME type for attachments (e.g., "image/png", "application/vnd.microsoft.card.adaptive")
     content: Optional[Any] = None  # For base64 images or adaptive card content
     name: Optional[str] = None  # File name
+    # Citation fields (for url_citation and file_citation types)
+    url: Optional[str] = None  # URL for url_citation
+    text: Optional[str] = None  # Original annotation text
+    fileId: Optional[str] = None  # File ID for file_citation
+    quote: Optional[str] = None  # Quote for file_citation
 
 class MessageGrounding(BaseModel):
     """Message grounding information for AI responses."""

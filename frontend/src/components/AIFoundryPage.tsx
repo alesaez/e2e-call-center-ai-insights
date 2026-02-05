@@ -1008,6 +1008,30 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
   const saveMessageWithRetry = async (conversationId: string, message: Message, maxRetries = 3): Promise<string | null> => {
     // Prepare payload outside try block for error logging
     const transformedAttachments = (message.attachments || []).map(attachment => {
+      // For url_citation attachments (e.g., from Fabric Data Agent), keep structure as-is
+      if (attachment.contentType === 'url_citation') {
+        return {
+          kind: 'url_citation',
+          contentType: attachment.contentType,
+          url: attachment.url,
+          title: attachment.title,
+          name: attachment.name,
+          text: attachment.text
+        };
+      }
+      
+      // For file_citation attachments, keep structure as-is
+      if (attachment.contentType === 'file_citation') {
+        return {
+          kind: 'file_citation',
+          contentType: attachment.contentType,
+          fileId: attachment.fileId,
+          quote: attachment.quote,
+          name: attachment.name,
+          text: attachment.text
+        };
+      }
+      
       // For annotation attachments, keep structure as-is (already has content object)
       if (attachment.contentType === 'annotation') {
         return {

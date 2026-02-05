@@ -219,6 +219,7 @@ class AIFoundryService:
                 
                 response_text = ""
                 attachments = []
+                seen_citation_urls = set()  # Track seen URLs to avoid duplicates
                 
                 # Extract the assistant's response (most recent message)
                 # messages is an ItemPaged iterator, convert to list
@@ -244,6 +245,13 @@ class AIFoundryService:
                                                 if hasattr(annotation, 'url_citation') and annotation.url_citation:
                                                     url_citation = annotation.url_citation
                                                     citation_url = url_citation.get('url') if isinstance(url_citation, dict) else getattr(url_citation, 'url', None)
+                                                    
+                                                    # Skip duplicate URLs
+                                                    if citation_url and citation_url in seen_citation_urls:
+                                                        continue
+                                                    if citation_url:
+                                                        seen_citation_urls.add(citation_url)
+                                                    
                                                     citation_title = url_citation.get('title') if isinstance(url_citation, dict) else getattr(url_citation, 'title', 'Source')
                                                     
                                                     attachments.append({
