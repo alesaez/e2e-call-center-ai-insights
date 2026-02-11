@@ -23,12 +23,20 @@ import {
   CardContent,
   CardActions,
   Grid,
+  List,
+  ListItem,
+  ListItemIcon,
+  ListItemText,
+  Divider,
+  CircularProgress,
 } from '@mui/material';
 import {
   Add as AddIcon,
   Edit as EditIcon,
   Delete as DeleteIcon,
   Save as SaveIcon,
+  CheckCircle as CheckCircleIcon,
+  Security as SecurityIcon,
 } from '@mui/icons-material';
 import apiClient from '../services/apiClient';
 import { UIConfig } from '../services/featureConfig';
@@ -57,6 +65,14 @@ interface QueryTemplate {
   is_active: boolean;
 }
 
+interface UserPermissionsData {
+  user_id: string;
+  user_email: string;
+  roles: string[];
+  permissions: string[];
+  is_administrator: boolean;
+}
+
 interface SettingsPageProps {
   uiConfig: UIConfig;
 }
@@ -64,6 +80,7 @@ interface SettingsPageProps {
 export default function SettingsPage({ uiConfig: _uiConfig }: SettingsPageProps) {
   const [tabValue, setTabValue] = useState(0);
   const [templates, setTemplates] = useState<QueryTemplate[]>([]);
+  const [userPermissions, setUserPermissions] = useState<UserPermissionsData | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
@@ -82,6 +99,8 @@ export default function SettingsPage({ uiConfig: _uiConfig }: SettingsPageProps)
   useEffect(() => {
     if (tabValue === 1) {
       loadTemplates();
+    } else if (tabValue === 3) {
+      loadUserPermissions();
     }
   }, [tabValue]);
 
@@ -94,6 +113,20 @@ export default function SettingsPage({ uiConfig: _uiConfig }: SettingsPageProps)
     } catch (err: any) {
       setError('Failed to load query templates');
       console.error('Error loading templates:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const loadUserPermissions = async () => {
+    try {
+      setLoading(true);
+      setError(null);
+      const response = await apiClient.get('/api/user/permissions');
+      setUserPermissions(response.data);
+    } catch (err: any) {
+      setError('Failed to load user permissions');
+      console.error('Error loading permissions:', err);
     } finally {
       setLoading(false);
     }
@@ -192,6 +225,7 @@ export default function SettingsPage({ uiConfig: _uiConfig }: SettingsPageProps)
           <Tab label="User Preferences" />
           <Tab label="Query Templates" />
           <Tab label="Notifications" />
+          <Tab label="My Permissions" />
         </Tabs>
 
         {/* User Preferences Tab */}
@@ -311,6 +345,140 @@ export default function SettingsPage({ uiConfig: _uiConfig }: SettingsPageProps)
             <li>Notification frequency</li>
           </ul>
         </TabPanel>
+
+        {/* My Permissions Tab */}
+        <TabPanel value={tabValue} index={3}>
+          <Box sx={{ display: 'flex', alignItems: 'center', mb: 3 }}>
+            <SecurityIcon sx={{ mr: 1, color: 'primary.main' }} />
+            <Typography variant="h6">
+              My Permissions
+            </Typography>
+          </Box>
+
+          <Typography variant="body2" color="text.secondary" sx={{ mb: 3 }}>
+            View your current role assignments and the permissions granted to your account.
+          </Typography>
+
+          {loading ? (
+            <Box sx={{ display: 'flex', justifyContent: 'center', alignItems: 'center', p: 4 }}>
+              <CircularProgress />
+            </Box>
+          ) : userPermissions ? (
+            <Grid container spacing={3}>
+              {/* User Info Card */}
+              <Grid item xs={12} md={6}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>
+                      Account Information
+                    </Typography>
+                    <Divider sx={{ mb: 2 }} />
+                    <Stack spacing={1.5}>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">
+                          Email
+                        </Typography>
+                        <Typography variant="body1">
+                          {userPermissions.user_email}
+                        </Typography>
+                      </Box>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">
+                          User ID
+                        </Typography>
+                        <Typography variant="body2" sx={{ fontFamily: 'monospace', fontSize: '0.875rem' }}>
+                          {userPermissions.user_id}
+                        </Typography>
+                      </Box>
+                      <Box>
+                        <Typography variant="caption" color="text.secondary">
+                          Administrator
+                        </Typography>
+                        <Box>
+                          <Chip
+                            label={userPermissions.is_administrator ? 'Yes' : 'No'}
+                            size="small"
+                            color={userPermissions.is_administrator ? 'success' : 'default'}
+                            sx={{ mt: 0.5 }}
+                          />
+                        </Box>
+                      </Box>
+                    </Stack>
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              {/* Roles Card */}
+              <Grid item xs={12} md={6}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>
+                      Assigned Roles
+                    </Typography>
+                    <Divider sx={{ mb: 2 }} />
+                    {userPermissions.roles.length === 0 ? (
+                      <Alert severity="info">No roles assigned</Alert>
+                    ) : (
+                      <Stack direction="row" spacing={1} flexWrap="wrap" useFlexGap>
+                        {userPermissions.roles.map((role) => (
+                          <Chip
+                            key={role}
+                            label={role}
+                            color="primary"
+                            variant="outlined"
+                            sx={{ mb: 1 }}
+                          />
+                        ))}
+                      </Stack>
+                    )}
+                  </CardContent>
+                </Card>
+              </Grid>
+
+              {/* Permissions Card */}
+              <Grid item xs={12}>
+                <Card>
+                  <CardContent>
+                    <Typography variant="h6" gutterBottom>
+                      Permissions ({userPermissions.permissions.length})
+                    </Typography>
+                    <Divider sx={{ mb: 2 }} />
+                    {userPermissions.permissions.length === 0 ? (
+                      <Alert severity="warning">
+                        No permissions granted. Please contact your administrator.
+                      </Alert>
+                    ) : (
+                      <List>
+                        {userPermissions.permissions.map((permission, index) => (
+                          <Box key={permission}>
+                            <ListItem>
+                              <ListItemIcon>
+                                <CheckCircleIcon color="success" />
+                              </ListItemIcon>
+                              <ListItemText
+                                primary={
+                                  <Typography variant="body1" sx={{ fontFamily: 'monospace' }}>
+                                    {permission}
+                                  </Typography>
+                                }
+                                secondary={getPermissionDescription(permission)}
+                              />
+                            </ListItem>
+                            {index < userPermissions.permissions.length - 1 && <Divider variant="inset" component="li" />}
+                          </Box>
+                        ))}
+                      </List>
+                    )}
+                  </CardContent>
+                </Card>
+              </Grid>
+            </Grid>
+          ) : (
+            <Alert severity="info">
+              Click to load your permission information
+            </Alert>
+          )}
+        </TabPanel>
       </Paper>
 
       {/* Create/Edit Template Dialog */}
@@ -377,4 +545,33 @@ export default function SettingsPage({ uiConfig: _uiConfig }: SettingsPageProps)
       </Dialog>
     </Box>
   );
+}
+
+// Helper function to get human-readable permission descriptions
+function getPermissionDescription(permission: string): string {
+  const descriptions: Record<string, string> = {
+    'dashboard:view': 'View dashboard and analytics',
+    'dashboard:export': 'Export dashboard data',
+    'chat:view': 'View chat conversations',
+    'chat:create': 'Create and send chat messages',
+    'chat:delete': 'Delete chat conversations',
+    'powerbi:view': 'View Power BI reports',
+    'powerbi:export': 'Export Power BI reports',
+    'powerbi:refresh': 'Refresh Power BI data',
+    'templates:view': 'View query templates',
+    'templates:create': 'Create new query templates',
+    'templates:update': 'Update existing query templates',
+    'templates:delete': 'Delete query templates',
+    'ai_foundry:query': 'Query AI Foundry agents',
+    'ai_foundry:advanced': 'Access advanced AI Foundry features',
+    'admin:users:view': 'View user information',
+    'admin:users:manage': 'Manage users and their roles',
+    'admin:roles:view': 'View role definitions',
+    'admin:roles:manage': 'Manage roles and permissions',
+    'admin:audit:view': 'View audit logs',
+    'admin:config:view': 'View system configuration',
+    'admin:config:manage': 'Manage system configuration',
+  };
+  
+  return descriptions[permission] || 'Permission access';
 }

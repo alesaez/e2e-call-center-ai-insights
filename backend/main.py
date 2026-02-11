@@ -616,6 +616,23 @@ async def get_user_profile(token_payload: Dict = Depends(verify_token)):
         "roles": token_payload.get("roles", []),
     }
 
+@app.get("/api/user/permissions")
+async def get_current_user_permissions(
+    user_permissions: UserPermissions = Depends(get_user_permissions)
+):
+    """
+    Get the current user's roles and permissions.
+    This endpoint is protected and requires valid authentication.
+    Returns the user's assigned roles and the complete list of permissions they have.
+    """
+    return {
+        "user_id": user_permissions.user_id,
+        "user_email": user_permissions.user_email,
+        "roles": user_permissions.roles,
+        "permissions": [perm.value for perm in user_permissions.permissions],
+        "is_administrator": user_permissions.is_administrator,
+    }
+
 @app.get("/api/dashboard/kpis")
 async def get_dashboard_kpis(
     user_permissions: UserPermissions = Depends(require_permission(Permission.DASHBOARD_VIEW))
