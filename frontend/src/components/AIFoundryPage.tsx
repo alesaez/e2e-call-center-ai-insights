@@ -24,6 +24,7 @@ import {
 import { useTheme } from '@mui/material/styles';
 import {
   Send as SendIcon,
+  Stop as StopIcon,
   SmartToy as BotIcon,
   Person as PersonIcon,
   QuestionMark as QuestionIcon,
@@ -491,6 +492,8 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
   const { refreshConversations, setCurrentConversationId: setContextConversationId } = useConversationContext();
   const forceNewConversationRef = useRef<boolean>(false); // Track if we should force a new conversation
   const processedNewConversationRef = useRef<boolean>(false); // Track if we've processed a new conversation request
+  const abortControllerRef = useRef<AbortController | null>(null); // Track abort controller for canceling requests
+  const navigatingAwayRef = useRef<boolean>(false); // Track if abort is due to navigation (not user Stop button)
   const [session, setSession] = useState<AIFoundrySession | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
@@ -527,6 +530,20 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
 
   const handleEditMessage = (text: string) => {
     setInputText(text);
+  };
+
+  const stopGenerating = () => {
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      abortControllerRef.current = null;
+      setSending(false);
+      // Cancel the active run on the server so the thread is freed for new messages
+      if (session?.conversationId) {
+        apiClient.post('/api/ai-foundry/cancel-run', {
+          conversationId: session.conversationId
+        }).catch(err => console.warn('Failed to cancel server-side run:', err));
+      }
+    }
   };
 
   const handleMessageFeedback = async (messageId: string, feedback: 'positive' | 'negative' | null) => {
@@ -630,15 +647,81 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
     const navigationState = location.state as { conversationId?: string; newConversation?: boolean } | null;
     
     if (navigationState?.conversationId && navigationState.conversationId !== currentConversationId) {
+      // Stop any ongoing generation when switching conversations
+      if (abortControllerRef.current) {
+        navigatingAwayRef.current = true;
+        const prevConversationId = currentConversationId;
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+        setSending(false);
+        // Cancel the active run on the server so the thread is freed for new messages
+        if (session?.conversationId) {
+          apiClient.post('/api/ai-foundry/cancel-run', {
+            conversationId: session.conversationId
+          }).catch(err => console.warn('Failed to cancel server-side run:', err));
+        }
+        // Save the stopped message to the PREVIOUS conversation
+        if (prevConversationId) {
+          const stoppedMsg: Message = {
+            id: (Date.now() + 1).toString(),
+            text: 'OK, I\'ve stopped generating the response.',
+            sender: 'bot',
+            timestamp: new Date(),
+          };
+          saveMessageWithRetry(prevConversationId, stoppedMsg);
+        }
+      }
+      
       // Load the conversation directly by ID instead of searching local array
       processedNewConversationRef.current = false; // Reset flag for conversation loads
+      forceNewConversationRef.current = false; // Don't force new conversation when loading existing one
       loadConversationById(navigationState.conversationId);
     } else if (navigationState?.newConversation && !processedNewConversationRef.current) {
+      // Stop any ongoing generation when starting new conversation
+      if (abortControllerRef.current) {
+        navigatingAwayRef.current = true;
+        const prevConversationId = currentConversationId;
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+        setSending(false);
+        // Cancel the active run on the server so the thread is freed for new messages
+        if (session?.conversationId) {
+          apiClient.post('/api/ai-foundry/cancel-run', {
+            conversationId: session.conversationId
+          }).catch(err => console.warn('Failed to cancel server-side run:', err));
+        }
+        // Save the stopped message to the PREVIOUS conversation
+        if (prevConversationId) {
+          const stoppedMsg: Message = {
+            id: (Date.now() + 1).toString(),
+            text: 'OK, I\'ve stopped generating the response.',
+            sender: 'bot',
+            timestamp: new Date(),
+          };
+          saveMessageWithRetry(prevConversationId, stoppedMsg);
+        }
+      }
+      
       // Handle new conversation request by resetting state
       processedNewConversationRef.current = true; // Mark as processed
-      resetToNewConversation();
+      // Only call resetToNewConversation if we already have a session
+      // (i.e., this is not the initial mount). On initial mount, the session
+      // init effect will create the session and show the welcome message.
+      if (session) {
+        resetToNewConversation();
+      }
     }
   }, [location.state]); // Only depend on location.state changes
+
+  // Cleanup on unmount - abort any ongoing requests
+  useEffect(() => {
+    return () => {
+      if (abortControllerRef.current) {
+        abortControllerRef.current.abort();
+        abortControllerRef.current = null;
+      }
+    };
+  }, []);
 
   // Periodic sync to ensure data integrity (sync every 30 seconds)
   useEffect(() => {
@@ -800,6 +883,20 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
       const textToSend = messageText || inputText.trim();
       if (!textToSend || sending || !session) return;
 
+    // Show user message in the chat immediately (before any async work)
+    const userMessage: Message = {
+      id: Date.now().toString(),
+      text: textToSend,
+      sender: 'user',
+      timestamp: new Date(),
+    };
+
+    setMessages(prev => [...prev, userMessage]);
+    setInputText('');
+    setSending(true);
+    setShowQuestions(false); // Hide questions after first message
+    setActiveSuggestions([]); // Clear current suggestions when user sends a message
+
     // Ensure we have a conversation for message persistence
     let conversationId = currentConversationId;
     
@@ -831,7 +928,15 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
         
         const newConversationResponse = await apiClient.post('/api/chat/conversations', {
           title: conversationTitle,
-          agent_id: session?.agentId
+          agent_id: session?.agentId,
+          session_data: session ? {
+            conversationId: session.conversationId,
+            userId: session.userId,
+            userName: session.userName,
+            projectName: session.projectName,
+            agentId: session.agentId,
+            welcomeMessage: session.welcomeMessage,
+          } : undefined
         });
         conversationId = newConversationResponse.data.id;
         setCurrentConversationId(conversationId);
@@ -842,19 +947,6 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
         conversationId = null;
       }
     }
-
-    const userMessage: Message = {
-      id: Date.now().toString(),
-      text: textToSend,
-      sender: 'user',
-      timestamp: new Date(),
-    };
-
-    setMessages(prev => [...prev, userMessage]);
-    setInputText('');
-    setSending(true);
-    setShowQuestions(false); // Hide questions after first message
-    setActiveSuggestions([]); // Clear current suggestions when user sends a message
 
     // Save user message immediately to prevent data loss
     if (conversationId) {
@@ -872,11 +964,16 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
     }
 
     try {
+      // Create abort controller for this request
+      abortControllerRef.current = new AbortController();
+      
       // Send message to AI Foundry via backend
       const response = await apiClient.post('/api/ai-foundry/send-message', {
         conversationId: session.conversationId,
         userId: session.userId,
         text: textToSend,
+      }, {
+        signal: abortControllerRef.current.signal
       });
 
       const botResponseText = response.data.response || response.data.text || 'I received your message.';
@@ -898,15 +995,47 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
       setMessages(prev => [...prev, botResponse]);
       setActiveSuggestions(followUpQuestions); // Set active suggestions for display
       
+      // Clear abort controller after successful response
+      abortControllerRef.current = null;
+      
       // Save bot response immediately
       if (conversationId) {
-        // Save bot response in background - don't await to avoid blocking UI
-        saveMessageWithRetry(conversationId, botResponse);
+        try {
+          console.log(`Attempting to save bot response to conversation: ${conversationId}`);
+          await saveMessageWithRetry(conversationId, botResponse);
+          console.log(`Successfully saved bot response to conversation: ${conversationId}`);
+        } catch (error) {
+          console.error(`Failed to save bot response to conversation ${conversationId}:`, error);
+        }
       }
       
       setSending(false);
 
     } catch (err: any) {
+      // Check if request was aborted by user
+      if (err.name === 'CanceledError' || err.code === 'ERR_CANCELED') {
+        console.log('Message generation stopped by user');
+        abortControllerRef.current = null;
+        setSending(false);
+        // Only show stopped message in current chat if user clicked Stop button
+        // (not when navigating away — that case is handled by the navigation effect)
+        if (!navigatingAwayRef.current) {
+          const stoppedMessage: Message = {
+            id: (Date.now() + 1).toString(),
+            text: 'OK, I\'ve stopped generating the response.',
+            sender: 'bot',
+            timestamp: new Date(),
+          };
+          setMessages(prev => [...prev, stoppedMessage]);
+          // Save to current conversation
+          if (conversationId) {
+            saveMessageWithRetry(conversationId, stoppedMessage);
+          }
+        }
+        navigatingAwayRef.current = false;
+        return;
+      }
+      
       console.error('Failed to send message:', err);
       const errorMessage: Message = {
         id: (Date.now() + 1).toString(),
@@ -1151,10 +1280,14 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
     // Reset the processed flag to allow the new conversation request
     processedNewConversationRef.current = false;
     // Use the same navigation approach as the left menu
-    navigate('/ai-foundry', { state: { newConversation: true }, replace: true });
+    navigate('/ai-foundry', { state: { newConversation: true, ts: Date.now() }, replace: true });
   };
 
-  const resetToNewConversation = () => {
+  const resetToNewConversation = async () => {
+    // Show loading immediately so the old chat disappears
+    setLoading(true);
+    setMessages([]);
+    
     // Force new conversation creation on next message
     forceNewConversationRef.current = true;
     
@@ -1165,18 +1298,35 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
     setActiveSuggestions([]); // Clear suggestions from previous conversation
     setError(null);
     
-    // Re-show welcome message if we have a session
-    if (session) {
+    // Create a fresh AI Foundry thread for context isolation
+    try {
+      const sessionResponse = await apiClient.post<AIFoundrySession>('/api/ai-foundry/token');
+      const newSession = sessionResponse.data;
+      setSession(newSession);
+      
       const welcomeMessage: Message = {
         id: 'welcome',
-        text: session.welcomeMessage || `Hello! I'm your AI assistant. How can I help you today?`,
+        text: newSession.welcomeMessage || `Hello! I'm your AI assistant. How can I help you today?`,
         sender: 'bot',
         timestamp: new Date(),
       };
       setMessages([welcomeMessage]);
-    } else {
-      // If no session, just clear messages
-      setMessages([]);
+    } catch (err) {
+      console.error('Failed to create new AI Foundry session:', err);
+      // Fallback: reuse existing session
+      if (session) {
+        const welcomeMessage: Message = {
+          id: 'welcome',
+          text: session.welcomeMessage || `Hello! I'm your AI assistant. How can I help you today?`,
+          sender: 'bot',
+          timestamp: new Date(),
+        };
+        setMessages([welcomeMessage]);
+      } else {
+        setMessages([]);
+      }
+    } finally {
+      setLoading(false);
     }
   };
 
@@ -1189,6 +1339,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
       setLoading(true);
       setError(null);
       setActiveSuggestions([]); // Clear suggestions from previous conversation
+      forceNewConversationRef.current = false; // We're loading an existing conversation, don't force new
       
       // Load the full conversation directly by ID
       const response = await apiClient.get(`/api/chat/conversations/${conversationId}`);
@@ -1240,11 +1391,43 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
         });
       } else {
         // If no session data found, create a fresh AI Foundry session for this conversation
+        // This handles legacy conversations that were created before session_data was stored
         console.warn('No session data found for conversation, creating fresh session');
         try {
           const sessionResponse = await apiClient.post<AIFoundrySession>('/api/ai-foundry/token');
           const sessionData = sessionResponse.data;
           setSession(sessionData);
+          
+          // Persist the new session_data to Cosmos so future loads will have it
+          const newSessionData = {
+            conversationId: sessionData.conversationId,
+            userId: sessionData.userId,
+            userName: sessionData.userName,
+            projectName: sessionData.projectName,
+            agentId: sessionData.agentId,
+            welcomeMessage: sessionData.welcomeMessage || '',
+          };
+          apiClient.patch(`/api/chat/conversations/${conversationId}/session-data`, {
+            session_data: newSessionData
+          }).catch(err => console.warn('Failed to persist session_data:', err));
+          
+          // Replay existing messages into the new AI Foundry thread so the agent
+          // regains context from the conversation history stored in Cosmos DB
+          if (convertedMessages.length > 0) {
+            const historyForReplay = convertedMessages
+              .filter(m => m.text && m.id !== 'welcome')
+              .map(m => ({
+                role: m.sender === 'user' ? 'user' : 'assistant',
+                content: m.text,
+              }));
+            
+            if (historyForReplay.length > 0) {
+              apiClient.post('/api/ai-foundry/replay-history', {
+                conversationId: sessionData.conversationId,
+                messages: historyForReplay,
+              }).catch(err => console.warn('Failed to replay history to new thread:', err));
+            }
+          }
         } catch (sessionError) {
           console.error('Failed to create fresh session:', sessionError);
           setError('Failed to create session for this conversation');
@@ -1310,7 +1493,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
           >
             <CircularProgress />
             <Typography variant="body2" color="text.secondary">
-              Connecting to Azure AI Foundry...
+              Preparing your chat...
             </Typography>
           </Box>
         )}
@@ -1686,18 +1869,33 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
                   placeholder="Ask me about call center metrics, agent performance, or anything else..."
                   disabled={sending}
                 />
-                <Button
-                  variant="contained"
-                  onClick={() => sendMessage()}
-                  disabled={!inputText.trim() || sending}
-                  sx={{ 
-                    minWidth: 60, 
-                    height: '56px',
-                    alignSelf: 'flex-end' 
-                  }}
-                >
-                  <SendIcon />
-                </Button>
+                {sending ? (
+                  <Button
+                    variant="contained"
+                    color="error"
+                    onClick={stopGenerating}
+                    sx={{ 
+                      minWidth: 60, 
+                      height: '56px',
+                      alignSelf: 'flex-end' 
+                    }}
+                  >
+                    <StopIcon />
+                  </Button>
+                ) : (
+                  <Button
+                    variant="contained"
+                    onClick={() => sendMessage()}
+                    disabled={!inputText.trim()}
+                    sx={{ 
+                      minWidth: 60, 
+                      height: '56px',
+                      alignSelf: 'flex-end' 
+                    }}
+                  >
+                    <SendIcon />
+                  </Button>
+                )}
               </Stack>
             </Box>
           </>

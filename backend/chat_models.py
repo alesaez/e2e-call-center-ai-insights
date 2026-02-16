@@ -78,6 +78,7 @@ class ChatSession(BaseModel):
     conversation_id: Optional[str] = None  # Agent-specific conversation ID (e.g., Copilot Studio or AI Foundry thread ID)
     user_name: Optional[str] = None  # User's display name
     is_active: bool = True
+    session_data: Optional[Dict[str, Any]] = None  # AI Foundry/Copilot Studio session data for resuming conversations
 
 class MessageFeedback(str, Enum):
     """Feedback types for messages."""
@@ -129,6 +130,7 @@ class ChatConversation(BaseModel):
     updated_at: datetime
     agent_id: Optional[str] = None  # Agent identifier
     is_active: bool = True
+    session_data: Optional[Dict[str, Any]] = None  # AI Foundry/Copilot Studio session data for resuming conversations
 
 class ConversationSummary(BaseModel):
     """Summary model for conversation list."""
@@ -152,6 +154,7 @@ class CreateConversationRequest(BaseModel):
     title: Optional[str] = None
     agent_id: Optional[str] = None  # Agent identifier (e.g., schema_name for Copilot Studio, agent_id for AI Foundry)
     metadata: Optional[dict] = None  # Optional metadata for the conversation
+    session_data: Optional[dict] = None  # AI Foundry/Copilot Studio session data for resuming conversations
 
 class AddMessageRequest(BaseModel):
     """Request model for adding a message to conversation."""

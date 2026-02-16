@@ -125,16 +125,12 @@ class RBACService:
         if role_name in BUILT_IN_ROLES:
             return BUILT_IN_ROLES[role_name]
         
-        # Check custom roles
-        if self.cosmos_service and self.custom_roles_container:
-            try:
-                # Query Cosmos DB for custom role
-                query = f"SELECT * FROM c WHERE c.name = '{role_name}'"
-                roles = await self.cosmos_service.query_items(self.custom_roles_container, query)
-                if roles:
-                    return RoleDefinition(**roles[0])
-            except Exception as e:
-                logger.error(f"Error fetching custom role {role_name}: {e}")
+        # TODO: Implement Cosmos DB-backed custom roles once CosmosDBService.query_items() is available
+        # if self.cosmos_service and self.custom_roles_container:
+        #     query = f"SELECT * FROM c WHERE c.name = '{role_name}'"
+        #     roles = await self.cosmos_service.query_items(self.custom_roles_container, query)
+        #     if roles:
+        #         return RoleDefinition(**roles[0])
         
         # Check in-memory cache
         return self._custom_roles_cache.get(role_name)
@@ -156,17 +152,13 @@ class RBACService:
             if include_disabled or role.is_enabled:
                 roles.append(role)
         
-        # Add custom roles from Cosmos DB
-        if self.cosmos_service and self.custom_roles_container:
-            try:
-                query = "SELECT * FROM c WHERE c.is_built_in = false"
-                if not include_disabled:
-                    query += " AND c.is_enabled = true"
-                
-                custom_roles = await self.cosmos_service.query_items(self.custom_roles_container, query)
-                roles.extend([RoleDefinition(**role) for role in custom_roles])
-            except Exception as e:
-                logger.error(f"Error fetching custom roles: {e}")
+        # TODO: Implement Cosmos DB-backed custom roles once CosmosDBService.query_items() is available
+        # if self.cosmos_service and self.custom_roles_container:
+        #     query = "SELECT * FROM c WHERE c.is_built_in = false"
+        #     if not include_disabled:
+        #         query += " AND c.is_enabled = true"
+        #     custom_roles = await self.cosmos_service.query_items(self.custom_roles_container, query)
+        #     roles.extend([RoleDefinition(**role) for role in custom_roles])
         
         # Add custom roles from cache
         for role in self._custom_roles_cache.values():
@@ -356,16 +348,14 @@ class RBACService:
     
     async def _get_user_role_assignments(self, user_id: str) -> List[RoleAssignment]:
         """Get all role assignments for a user."""
-        if self.cosmos_service and self.role_assignments_container:
-            try:
-                query = f"SELECT * FROM c WHERE c.user_id = '{user_id}'"
-                assignments = await self.cosmos_service.query_items(
-                    self.role_assignments_container,
-                    query
-                )
-                return [RoleAssignment(**assignment) for assignment in assignments]
-            except Exception as e:
-                logger.error(f"Error fetching role assignments: {e}")
+        # TODO: Implement Cosmos DB-backed role assignments once CosmosDBService.query_items() is available
+        # if self.cosmos_service and self.role_assignments_container:
+        #     query = f"SELECT * FROM c WHERE c.user_id = '{user_id}'"
+        #     assignments = await self.cosmos_service.query_items(
+        #         self.role_assignments_container,
+        #         query
+        #     )
+        #     return [RoleAssignment(**assignment) for assignment in assignments]
         
         return self._role_assignments_cache.get(user_id, [])
     

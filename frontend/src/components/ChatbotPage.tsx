@@ -945,7 +945,7 @@ export default function ChatbotPage({ uiConfig: _uiConfig }: ChatbotPageProps) {
     // Reset the processed flag to allow the new conversation request
     processedNewConversationRef.current = false;
     // Use the same navigation approach as the left menu
-    navigate('/chatbot', { state: { newConversation: true }, replace: true });
+    navigate('/chatbot', { state: { newConversation: true, ts: Date.now() }, replace: true });
   };
 
   const resetToNewConversation = () => {

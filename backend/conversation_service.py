@@ -44,7 +44,8 @@ class ConversationService:
         agent_conversation_id: str,
         title: Optional[str] = None,
         agent_id: Optional[str] = None,
-        metadata: Optional[dict] = None
+        metadata: Optional[dict] = None,
+        session_data: Optional[dict] = None
     ) -> ChatConversation:
         """
         Create a new conversation session.
@@ -56,6 +57,7 @@ class ConversationService:
             title: Optional conversation title
             agent_id: Agent identifier (e.g., schema_name for Copilot Studio, agent_id for AI Foundry)
             metadata: Optional additional metadata
+            session_data: Optional AI Foundry/Copilot Studio session data for resuming conversations
             
         Returns:
             ChatConversation object
@@ -69,7 +71,8 @@ class ConversationService:
                     copilot_conversation_id=agent_conversation_id,
                     title=title,
                     metadata=metadata,
-                    agent_id=agent_id
+                    agent_id=agent_id,
+                    session_data=session_data
                 )
                 
                 # Convert to conversation
@@ -83,7 +86,8 @@ class ConversationService:
                     created_at=session.createdAt,
                     updated_at=session.lastActiveAt,
                     agent_id=agent_id,
-                    is_active=session.is_active
+                    is_active=session.is_active,
+                    session_data=session.session_data
                 )
                 
                 logger.info(f"Created conversation in Cosmos: {conversation.id} for agent: {agent_id}")
@@ -106,7 +110,8 @@ class ConversationService:
             created_at=datetime.utcnow(),
             updated_at=datetime.utcnow(),
             agent_id=agent_id,
-            is_active=True
+            is_active=True,
+            session_data=session_data
         )
         
         self._in_memory_store[conversation_id] = conversation
@@ -338,6 +343,24 @@ class ConversationService:
         
         return False
     
+    async def update_session_data(
+        self,
+        conversation_id: str,
+        user_id: str,
+        session_data: dict
+    ) -> bool:
+        """
+        Update session_data on an existing conversation.
+        Used when resuming a legacy conversation that had no AI Foundry thread stored.
+        """
+        if self.cosmos_service:
+            try:
+                return await self.cosmos_service.update_session_data(conversation_id, user_id, session_data)
+            except Exception as e:
+                logger.error(f"Failed to update session_data for {conversation_id}: {e}")
+                return False
+        return False
+
     async def delete_conversation(
         self,
         conversation_id: str,

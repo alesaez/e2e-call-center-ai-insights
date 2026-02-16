@@ -225,7 +225,7 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
     // Clear the context conversation ID for new chat
     setContextConversationId(null);
     // Navigate to chatbot with new conversation flag
-    navigate('/chatbot', { state: { newConversation: true }, replace: true });
+    navigate('/chatbot', { state: { newConversation: true, ts: Date.now() }, replace: true });
     if (isMobile) setMobileOpen(false);
   };
 
@@ -233,7 +233,7 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
     // Clear the context conversation ID for new chat
     setContextConversationId(null);
     // Navigate to AI Foundry with new conversation flag
-    navigate('/ai-foundry', { state: { newConversation: true }, replace: true });
+    navigate('/ai-foundry', { state: { newConversation: true, ts: Date.now() }, replace: true });
     if (isMobile) setMobileOpen(false);
   };
 

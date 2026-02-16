@@ -126,7 +126,8 @@ class CosmosDBService:
         metadata: Optional[dict] = None,
         tenant_id: Optional[str] = None,
         model: str = "gpt-4o-mini",
-        agent_id: Optional[str] = None
+        agent_id: Optional[str] = None,
+        session_data: Optional[dict] = None
     ) -> ChatSession:
         """Create a new chat session in the Sessions container."""
         await self.initialize()
@@ -153,7 +154,8 @@ class CosmosDBService:
             agentId=agent_id,
             conversation_id=copilot_conversation_id,
             user_name=user_name,
-            is_active=True
+            is_active=True,
+            session_data=session_data
         )
         
         try:
@@ -168,7 +170,7 @@ class CosmosDBService:
             
         except exceptions.CosmosResourceExistsError:
             # Handle duplicate ID (rare but possible)
-            return await self.create_session(user_id, user_name, copilot_conversation_id, title, metadata, tenant_id, model, agent_id)
+            return await self.create_session(user_id, user_name, copilot_conversation_id, title, metadata, tenant_id, model, agent_id, session_data)
         except Exception as e:
             logger.error(f"Failed to create session: {e}")
             raise
@@ -334,7 +336,8 @@ class CosmosDBService:
                 created_at=datetime.fromisoformat(session_item['createdAt'].replace('Z', '+00:00')),
                 updated_at=datetime.fromisoformat(session_item['lastActiveAt'].replace('Z', '+00:00')),
                 agent_id=session_item.get('agentId'),
-                is_active=session_item.get('is_active', True)
+                is_active=session_item.get('is_active', True),
+                session_data=session_item.get('session_data')
             )
             
             return conversation
@@ -559,6 +562,35 @@ class CosmosDBService:
         except Exception as e:
             logger.warning(f"Failed to update session activity for {session_id}: {e}")
     
+    async def update_session_data(self, session_id: str, user_id: str, session_data: dict) -> bool:
+        """Update session_data on an existing session (e.g. to store AI Foundry thread ID)."""
+        await self.initialize()
+        
+        if not self.sessions_container:
+            return False
+        
+        try:
+            session_item = await self.sessions_container.read_item(
+                item=session_id,
+                partition_key=user_id
+            )
+            
+            session_item['session_data'] = session_data
+            session_item['lastActiveAt'] = datetime.utcnow().isoformat()
+            
+            await self.sessions_container.replace_item(
+                item=session_id,
+                body=session_item
+            )
+            
+            return True
+            
+        except exceptions.CosmosResourceNotFoundError:
+            return False
+        except Exception as e:
+            logger.error(f"Failed to update session_data for {session_id}: {e}")
+            return False
+
     async def delete_conversation(self, session_id: str, user_id: str) -> bool:
         """Soft delete a conversation (mark session as inactive)."""
         await self.initialize()

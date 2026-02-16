@@ -63,27 +63,49 @@ class AIFoundryService:
         Returns:
             Access token for Azure AI services
         """
-        try:
-            # Scope for Azure AI Foundry (https://ai.azure.com is the correct audience)
-            scopes = ["https://ai.azure.com/.default"]
-            
-            # Perform On-Behalf-Of token exchange
-            result = self.msal_app.acquire_token_on_behalf_of(
-                user_assertion=user_token,
-                scopes=scopes
-            )
-            
-            if "access_token" in result:
-                logger.info("Successfully acquired Azure AI token via OBO flow")
-                return result["access_token"]
-            else:
-                error_msg = result.get("error_description", result.get("error", "Unknown error"))
-                logger.error(f"Failed to acquire Azure AI token: {error_msg}")
-                raise ValueError(f"MSAL OBO token acquisition failed: {error_msg}")
+        max_retries = 3
+        last_exception = None
+        
+        for attempt in range(1, max_retries + 1):
+            try:
+                # Scope for Azure AI Foundry (https://ai.azure.com is the correct audience)
+                scopes = ["https://ai.azure.com/.default"]
                 
-        except Exception as e:
-            logger.error(f"Error in MSAL OBO flow: {e}")
-            raise
+                # Perform On-Behalf-Of token exchange
+                result = self.msal_app.acquire_token_on_behalf_of(
+                    user_assertion=user_token,
+                    scopes=scopes
+                )
+                
+                if "access_token" in result:
+                    if attempt > 1:
+                        logger.info(f"Successfully acquired Azure AI token via OBO flow (attempt {attempt})")
+                    else:
+                        logger.info("Successfully acquired Azure AI token via OBO flow")
+                    return result["access_token"]
+                else:
+                    error_msg = result.get("error_description", result.get("error", "Unknown error"))
+                    logger.error(f"Failed to acquire Azure AI token: {error_msg}")
+                    raise ValueError(f"MSAL OBO token acquisition failed: {error_msg}")
+                    
+            except ValueError:
+                # Don't retry MSAL-level errors (auth failures), re-raise immediately
+                raise
+            except Exception as e:
+                last_exception = e
+                logger.warning(f"MSAL OBO flow attempt {attempt}/{max_retries} failed: {e}")
+                if attempt < max_retries:
+                    import time
+                    time.sleep(0.5 * attempt)  # Back off: 0.5s, 1s
+                    # Recreate MSAL app in case the HTTP session is broken
+                    self.msal_app = msal.ConfidentialClientApplication(
+                        client_id=self.ai_foundry_settings.app_client_id,
+                        client_credential=self.ai_foundry_settings.app_client_secret,
+                        authority=f"https://login.microsoftonline.com/{self.ai_foundry_settings.tenant_id}"
+                    )
+        
+        logger.error(f"Error in MSAL OBO flow after {max_retries} attempts: {last_exception}")
+        raise last_exception
     
     async def start_conversation(
         self, 
@@ -165,6 +187,166 @@ class AIFoundryService:
             logger.error(f"Failed to start Azure AI Foundry conversation: {e}")
             raise
     
+    async def cancel_active_runs(
+        self,
+        conversation_id: str,
+        user_token: str
+    ) -> Dict:
+        """
+        Cancel any active runs on a thread so new messages can be added.
+        
+        Args:
+            conversation_id: The thread ID from Azure AI Foundry
+            user_token: User's access token for OBO flow
+            
+        Returns:
+            Dict with cancellation results
+        """
+        try:
+            azure_ai_token = self._get_azure_ai_token(user_token)
+            credential = TokenCredential(azure_ai_token)
+            
+            client = AIProjectClient(
+                endpoint=self.ai_foundry_settings.endpoint,
+                credential=credential
+            )
+            
+            try:
+                # List all runs for this thread
+                runs = await asyncio.to_thread(
+                    client.agents.runs.list,
+                    thread_id=conversation_id
+                )
+                runs_list = list(runs)
+                
+                cancelled_count = 0
+                for run in runs_list:
+                    # Cancel runs that are still active (queued, in_progress, requires_action)
+                    if run.status in ("queued", "in_progress", "requires_action"):
+                        logger.info(f"Cancelling active run {run.id} (status: {run.status}) on thread {conversation_id}")
+                        await asyncio.to_thread(
+                            client.agents.runs.cancel,
+                            thread_id=conversation_id,
+                            run_id=run.id
+                        )
+                        cancelled_count += 1
+                
+                logger.info(f"Cancelled {cancelled_count} active run(s) on thread {conversation_id}")
+                return {"success": True, "cancelled_runs": cancelled_count}
+                
+            finally:
+                await asyncio.to_thread(client.close)
+                
+        except Exception as e:
+            logger.error(f"Failed to cancel active runs on thread {conversation_id}: {e}")
+            raise
+
+    async def replay_history(
+        self,
+        conversation_id: str,
+        messages: List[Dict[str, str]],
+        user_token: str
+    ) -> Dict:
+        """
+        Replay conversation history into an AI Foundry thread.
+        Adds user/assistant messages without triggering a run, so the agent
+        regains context from prior messages stored in Cosmos DB.
+        
+        Args:
+            conversation_id: The AI Foundry thread ID
+            messages: List of {"role": "user"|"assistant", "content": "..."}
+            user_token: User's access token for OBO flow
+            
+        Returns:
+            Dict with replay results
+        """
+        try:
+            azure_ai_token = self._get_azure_ai_token(user_token)
+            credential = TokenCredential(azure_ai_token)
+            
+            client = AIProjectClient(
+                endpoint=self.ai_foundry_settings.endpoint,
+                credential=credential
+            )
+            
+            try:
+                replayed = 0
+                for msg in messages:
+                    role = msg.get("role", "user")
+                    content = msg.get("content", "").strip()
+                    
+                    # Skip empty messages, welcome messages, and system messages
+                    if not content or role not in ("user", "assistant"):
+                        continue
+                    
+                    await asyncio.to_thread(
+                        client.agents.messages.create,
+                        thread_id=conversation_id,
+                        role=role,
+                        content=content
+                    )
+                    replayed += 1
+                
+                logger.info(f"Replayed {replayed} messages into thread {conversation_id}")
+                return {"success": True, "replayed_messages": replayed}
+                
+            finally:
+                await asyncio.to_thread(client.close)
+                
+        except Exception as e:
+            logger.error(f"Failed to replay history into thread {conversation_id}: {e}")
+            raise
+
+    async def _ensure_no_active_runs(self, client: AIProjectClient, thread_id: str, max_wait_seconds: int = 15) -> None:
+        """
+        Cancel any active runs on a thread and wait until they reach a terminal state.
+        This prevents 'Can't add messages to thread while a run is active' errors
+        when the user stopped generation and immediately sends a new message.
+        """
+        terminal_statuses = {"completed", "cancelled", "failed", "expired"}
+        
+        runs = await asyncio.to_thread(
+            client.agents.runs.list,
+            thread_id=thread_id
+        )
+        runs_list = list(runs)
+        
+        active_runs = [r for r in runs_list if r.status not in terminal_statuses]
+        if not active_runs:
+            return
+        
+        # Cancel any runs that are still in a cancellable state
+        for run in active_runs:
+            if run.status in ("queued", "in_progress", "requires_action"):
+                logger.info(f"Cancelling lingering run {run.id} (status: {run.status}) on thread {thread_id}")
+                try:
+                    await asyncio.to_thread(
+                        client.agents.runs.cancel,
+                        thread_id=thread_id,
+                        run_id=run.id
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to cancel run {run.id}: {e}")
+        
+        # Poll until all runs reach a terminal state
+        poll_interval = 0.5  # seconds
+        elapsed = 0.0
+        while elapsed < max_wait_seconds:
+            await asyncio.sleep(poll_interval)
+            elapsed += poll_interval
+            
+            runs = await asyncio.to_thread(
+                client.agents.runs.list,
+                thread_id=thread_id
+            )
+            still_active = [r for r in runs if r.status not in terminal_statuses]
+            if not still_active:
+                logger.info(f"All runs on thread {thread_id} reached terminal state after {elapsed:.1f}s")
+                return
+        
+        # Log warning but proceed anyway — the API call will fail naturally if there's still an issue
+        logger.warning(f"Timed out waiting for runs to finish on thread {thread_id} after {max_wait_seconds}s")
+
     async def send_message(
         self,
         conversation_id: str,
@@ -196,6 +378,11 @@ class AIFoundryService:
             )
             
             try:
+                # Cancel any lingering active runs before sending a new message.
+                # This handles the case where the user clicked Stop but the run
+                # hasn't finished cancelling yet (in_progress → cancelling → cancelled).
+                await self._ensure_no_active_runs(client, conversation_id)
+                
                 # Add user message to thread
                 await asyncio.to_thread(
                     client.agents.messages.create,
@@ -435,6 +622,7 @@ class AIFoundryService:
             # Build the system prompt for question generation
             system_prompt = f"""You are a helpful assistant that suggests relevant follow-up questions based on an ongoing conversation between a user and an AI assistant.
 Using the provided conversation history ordered newest-to-oldest (the first message is the most recent, including the last assistant response), generate {max_questions} short, relevant questions that the user might logically ask next.
+
 Priority Rule (Critical):
 - First, inspect the last assistant message for any explicit or implied follow-up suggestions (e.g., requests for charts, deeper analysis, comparisons, or strategies).
 - Convert those suggestions into user-phrased questions and prioritize them in the output.
@@ -456,12 +644,14 @@ Guidelines:
 - Avoid repeating questions already answered
 - Prioritize questions that naturally advance the conversation
 
-Output Requirements:
-- Return ONLY a JSON array of question strings
-- No explanations, headings, or additional text
+Output Format (CRITICAL):
+You MUST return a valid JSON object with a "questions" key containing an array of question strings.
+Use ONLY double quotes for all strings. Do NOT return a plain array.
+Do NOT include explanations, markdown formatting, or additional text.
+Each question must be a simple string without nested quotes or special characters.
 
 Example Output:
-["What is the average call duration?", "Show me agent performance trends", "Which issues cause the most customer complaints?"]"""
+{{"questions": ["What is the average call duration?", "Show me agent performance trends", "Which issues cause the most customer complaints?"]}}"""
             
             # Build conversation context
             conversation_context = "\n".join([
@@ -473,7 +663,7 @@ Example Output:
 
 {conversation_context}
 
-Generate {max_questions} relevant follow-up questions as a JSON array."""
+Generate {max_questions} relevant follow-up questions in the JSON object format specified above."""
             
             # Call Azure OpenAI for question generation
             response = await asyncio.to_thread(
@@ -501,21 +691,67 @@ Generate {max_questions} relevant follow-up questions as a JSON array."""
                 elif isinstance(parsed, dict):
                     # Try common keys
                     questions = parsed.get('questions', parsed.get('suggestions', parsed.get('followup', [])))
+                    
+                    # If questions is a string (malformed JSON string), try to parse it again
+                    if isinstance(questions, str):
+                        try:
+                            # Try parsing as JSON first
+                            questions = json.loads(questions)
+                        except:
+                            # If it's not valid JSON, try to extract from string representation
+                            # Handle cases like "['Q1','Q2','Q3']" or '["Q1","Q2","Q3"]'
+                            import re
+                            # Extract content between brackets, split by comma
+                            match = re.search(r'\[(.*?)\]', questions)
+                            if match:
+                                inner = match.group(1)
+                                # Split by comma and clean each question
+                                questions = [q.strip().strip('"\'') for q in inner.split(',') if q.strip()]
+                            else:
+                                # Fallback: split by common separators
+                                questions = [q.strip() for q in questions.split('\n') if q.strip()]
                 else:
                     questions = []
                 
-                # Ensure we have strings and limit to max_questions
-                questions = [str(q).strip() for q in questions if q][:max_questions]
+                # Ensure we have clean strings and limit to max_questions
+                clean_questions = []
+                for q in questions:
+                    if q:
+                        # Clean the question string thoroughly
+                        q_str = str(q).strip()
+                        
+                        # Remove all JSON artifacts, quotes, and brackets
+                        q_str = q_str.strip('"\'[]{}')
+                        
+                        # Remove escaped quotes and backslashes
+                        q_str = q_str.replace('\\"', '"').replace("\\'", "'").replace('\\\\', '\\')
+                        
+                        # Remove leading numbers or bullets
+                        q_str = q_str.lstrip('0123456789.- ')
+                        
+                        # Final validation: ensure question looks reasonable
+                        if len(q_str) >= 3 and any(c.isalnum() for c in q_str):
+                            clean_questions.append(q_str)
                 
-                logger.info(f"Generated {len(questions)} follow-up questions using Azure OpenAI")
+                questions = clean_questions[:max_questions]
+                
+                if len(questions) > 0:
+                    logger.info(f"Generated {len(questions)} follow-up questions")
+                
                 return questions
                 
             except json.JSONDecodeError as je:
                 logger.warning(f"Failed to parse OpenAI response as JSON: {je}")
                 # Try to extract questions from text if JSON parsing fails
                 lines = content.strip().split('\n')
-                questions = [line.strip(' -"[]') for line in lines if line.strip()][:max_questions]
-                return questions
+                questions = []
+                for line in lines:
+                    cleaned = line.strip(' -"\'[]{}')
+                    cleaned = cleaned.replace('\\"', '"').replace("\\'", "'")
+                    # Validate it looks like a real question
+                    if len(cleaned) >= 3 and any(c.isalnum() for c in cleaned):
+                        questions.append(cleaned)
+                return questions[:max_questions]
                 
         except Exception as e:
             logger.error(f"Failed to generate follow-up questions: {e}")

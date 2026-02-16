@@ -1330,6 +1330,98 @@ async def send_message_to_ai_foundry(
             detail=f"Failed to send message: {str(e)}"
         )
 
+@app.post("/api/ai-foundry/replay-history")
+async def replay_history_to_ai_foundry(
+    request: Request,
+    message_data: Dict,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    user_permissions: UserPermissions = Depends(require_permission(Permission.AI_FOUNDRY_QUERY))
+):
+    """
+    Replay conversation history into an AI Foundry thread.
+    Used when resuming a legacy conversation that had no session_data stored.
+    Requires: AI_FOUNDRY_QUERY permission
+    """
+    if not ai_foundry_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Azure AI Foundry is not configured."
+        )
+    
+    try:
+        user_token = credentials.credentials
+        conversation_id = message_data.get("conversationId")
+        messages = message_data.get("messages", [])
+        
+        if not conversation_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="conversationId is required"
+            )
+        
+        if not messages:
+            return {"success": True, "replayed_messages": 0}
+        
+        result = await ai_foundry_service.replay_history(
+            conversation_id=conversation_id,
+            messages=messages,
+            user_token=user_token
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to replay history to Azure AI Foundry: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to replay history: {str(e)}"
+        )
+
+@app.post("/api/ai-foundry/cancel-run")
+async def cancel_ai_foundry_run(
+    request: Request,
+    message_data: Dict,
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    user_permissions: UserPermissions = Depends(require_permission(Permission.AI_FOUNDRY_QUERY))
+):
+    """
+    Cancel any active runs on an Azure AI Foundry thread.
+    This must be called when the user stops generation so the thread is freed for new messages.
+    """
+    if not ai_foundry_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Azure AI Foundry is not configured."
+        )
+    
+    try:
+        user_token = credentials.credentials
+        conversation_id = message_data.get("conversationId")
+        
+        if not conversation_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="conversationId is required"
+            )
+        
+        result = await ai_foundry_service.cancel_active_runs(
+            conversation_id=conversation_id,
+            user_token=user_token
+        )
+        
+        return result
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to cancel run on Azure AI Foundry: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to cancel run: {str(e)}"
+        )
+
 @app.post("/api/ai-foundry/send-card-response")
 async def send_card_response_to_ai_foundry(
     message_data: Dict,
@@ -1497,7 +1589,8 @@ async def create_conversation(
             agent_conversation_id=agent_conversation_id,
             agent_id=request.agent_id,
             title=request.title,
-            metadata=request.metadata
+            metadata=request.metadata,
+            session_data=request.session_data
         )
         
         return conversation
@@ -1632,6 +1725,54 @@ async def add_message(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Failed to add message"
+        )
+
+class SessionDataUpdateRequest(BaseModel):
+    """Request model for updating session_data on a conversation."""
+    session_data: dict
+
+@app.patch("/api/chat/conversations/{conversation_id}/session-data")
+async def update_conversation_session_data(
+    conversation_id: str,
+    request: SessionDataUpdateRequest,
+    user_permissions: UserPermissions = Depends(require_permission(Permission.CHAT_CREATE))
+):
+    """
+    Update the session_data for a conversation (e.g. to store AI Foundry thread ID).
+    Requires: CHAT_CREATE permission
+    """
+    if not conversation_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Chat history service is not available."
+        )
+    
+    user_id = user_permissions.user_id
+    if not user_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="User ID not found in token"
+        )
+    
+    try:
+        success = await conversation_service.update_session_data(
+            conversation_id=conversation_id,
+            user_id=user_id,
+            session_data=request.session_data
+        )
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Conversation not found"
+            )
+        return {"success": True}
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update session_data for {conversation_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update session data"
         )
 
 class MessageFeedbackRequest(BaseModel):
