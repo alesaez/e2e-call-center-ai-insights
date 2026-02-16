@@ -30,6 +30,10 @@ pyodbc>=5.0.0
 azure-ai-projects==1.0.0
 azure-ai-inference==1.0.0b9
 
+# Observability - Azure Monitor / Application Insights tracing
+azure-monitor-opentelemetry
+opentelemetry-sdk
+
 # Azure OpenAI for question generation
 openai==1.58.1
 

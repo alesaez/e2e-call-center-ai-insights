@@ -184,6 +184,26 @@ async def startup_event():
         try:
             ai_foundry_service = AIFoundryService(settings, visualization_service)
             logger.info("✓ Azure AI Foundry service initialized with visualization support")
+            
+            # Configure Azure Monitor / Application Insights tracing
+            # using the connection string from the AI Foundry project
+            try:
+                from azure.identity import DefaultAzureCredential
+                from azure.ai.projects import AIProjectClient
+                from azure.monitor.opentelemetry import configure_azure_monitor
+                
+                telemetry_client = AIProjectClient(
+                    endpoint=settings.ai_foundry.endpoint,
+                    credential=DefaultAzureCredential()
+                )
+                connection_string = telemetry_client.telemetry.get_application_insights_connection_string()
+                if connection_string:
+                    configure_azure_monitor(connection_string=connection_string)
+                    logger.info("✓ Application Insights tracing enabled via AI Foundry project")
+                else:
+                    logger.warning("⚠ No Application Insights connection string found in AI Foundry project")
+            except Exception as e:
+                logger.warning(f"⚠ Could not configure Application Insights tracing: {e}")
         except Exception as e:
             logger.error(f"Failed to initialize Azure AI Foundry service: {e}")
             ai_foundry_service = None
