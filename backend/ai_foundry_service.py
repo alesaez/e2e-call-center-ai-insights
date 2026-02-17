@@ -8,12 +8,14 @@ import msal
 from azure.core.credentials import AccessToken
 from azure.ai.projects import AIProjectClient
 from openai import AzureOpenAI
+from opentelemetry import trace
 from config import Settings
 import logging
 import asyncio
 import json
 
 logger = logging.getLogger(__name__)
+tracer = trace.get_tracer(__name__)
 
 
 class TokenCredential:
@@ -137,48 +139,53 @@ class AIFoundryService:
             )
             
             try:
-                # Create a new thread for the conversation
-                thread = await asyncio.to_thread(
-                    client.agents.threads.create
-                )
-                
-                conversation_id = thread.id
-                
-                # Get welcome message if agent has one configured
-                welcome_message = "Hello! How can I assist you today?"
-                
-                # Try to get the first message from the agent if configured
-                if self.ai_foundry_settings.send_welcome_message:
-                    try:
-                        # Send a greeting to trigger welcome message
-                        messages = await asyncio.to_thread(
-                            client.agents.messages.list,
-                            thread_id=conversation_id
-                        )
-                        
-                        # messages is an ItemPaged iterator, convert to list
-                        messages_list = list(messages)
-                        if messages_list and len(messages_list) > 0:
-                            first_message = messages_list[0]
-                            if hasattr(first_message, 'content') and first_message.content:
-                                for content in first_message.content:
-                                    # Check if content has text attribute (duck typing)
-                                    if hasattr(content, 'text') and hasattr(content.text, 'value'):
-                                        welcome_message = content.text.value
-                                        break
-                    except Exception as e:
-                        logger.warning(f"Failed to get welcome message: {e}")
-                
-                return {
-                    "conversationId": conversation_id,
-                    "userId": user_id,
-                    "userName": user_name,
-                    "projectName": self.ai_foundry_settings.project_name,
-                    "agentId": self.ai_foundry_settings.agent_id,
-                    "expiresIn": 3600,  # 1 hour
-                    "sessionCreated": True,
-                    "welcomeMessage": welcome_message
-                }
+                with tracer.start_as_current_span("start-conversation") as span:
+                    span.set_attribute("ai_foundry.user_id", user_id)
+                    span.set_attribute("ai_foundry.agent_id", self.ai_foundry_settings.agent_id)
+                    
+                    # Create a new thread for the conversation
+                    thread = await asyncio.to_thread(
+                        client.agents.threads.create
+                    )
+                    
+                    conversation_id = thread.id
+                    span.set_attribute("ai_foundry.thread_id", conversation_id)
+                    
+                    # Get welcome message if agent has one configured
+                    welcome_message = "Hello! How can I assist you today?"
+                    
+                    # Try to get the first message from the agent if configured
+                    if self.ai_foundry_settings.send_welcome_message:
+                        try:
+                            # Send a greeting to trigger welcome message
+                            messages = await asyncio.to_thread(
+                                client.agents.messages.list,
+                                thread_id=conversation_id
+                            )
+                            
+                            # messages is an ItemPaged iterator, convert to list
+                            messages_list = list(messages)
+                            if messages_list and len(messages_list) > 0:
+                                first_message = messages_list[0]
+                                if hasattr(first_message, 'content') and first_message.content:
+                                    for content in first_message.content:
+                                        # Check if content has text attribute (duck typing)
+                                        if hasattr(content, 'text') and hasattr(content.text, 'value'):
+                                            welcome_message = content.text.value
+                                            break
+                        except Exception as e:
+                            logger.warning(f"Failed to get welcome message: {e}")
+                    
+                    return {
+                        "conversationId": conversation_id,
+                        "userId": user_id,
+                        "userName": user_name,
+                        "projectName": self.ai_foundry_settings.project_name,
+                        "agentId": self.ai_foundry_settings.agent_id,
+                        "expiresIn": 3600,  # 1 hour
+                        "sessionCreated": True,
+                        "welcomeMessage": welcome_message
+                    }
             finally:
                 # Close the client to cleanup aiohttp session
                 await asyncio.to_thread(client.close)
@@ -270,25 +277,30 @@ class AIFoundryService:
             )
             
             try:
-                replayed = 0
-                for msg in messages:
-                    role = msg.get("role", "user")
-                    content = msg.get("content", "").strip()
+                with tracer.start_as_current_span("replay-history") as span:
+                    span.set_attribute("ai_foundry.thread_id", conversation_id)
+                    span.set_attribute("ai_foundry.message_count", len(messages))
                     
-                    # Skip empty messages, welcome messages, and system messages
-                    if not content or role not in ("user", "assistant"):
-                        continue
+                    replayed = 0
+                    for msg in messages:
+                        role = msg.get("role", "user")
+                        content = msg.get("content", "").strip()
+                        
+                        # Skip empty messages, welcome messages, and system messages
+                        if not content or role not in ("user", "assistant"):
+                            continue
+                        
+                        await asyncio.to_thread(
+                            client.agents.messages.create,
+                            thread_id=conversation_id,
+                            role=role,
+                            content=content
+                        )
+                        replayed += 1
                     
-                    await asyncio.to_thread(
-                        client.agents.messages.create,
-                        thread_id=conversation_id,
-                        role=role,
-                        content=content
-                    )
-                    replayed += 1
-                
-                logger.info(f"Replayed {replayed} messages into thread {conversation_id}")
-                return {"success": True, "replayed_messages": replayed}
+                    span.set_attribute("ai_foundry.replayed_count", replayed)
+                    logger.info(f"Replayed {replayed} messages into thread {conversation_id}")
+                    return {"success": True, "replayed_messages": replayed}
                 
             finally:
                 await asyncio.to_thread(client.close)
@@ -378,158 +390,165 @@ class AIFoundryService:
             )
             
             try:
-                # Cancel any lingering active runs before sending a new message.
-                # This handles the case where the user clicked Stop but the run
-                # hasn't finished cancelling yet (in_progress → cancelling → cancelled).
-                await self._ensure_no_active_runs(client, conversation_id)
-                
-                # Add user message to thread
-                await asyncio.to_thread(
-                    client.agents.messages.create,
-                    thread_id=conversation_id,
-                    role="user",
-                    content=message_text
-                )
-                
-                # Create and poll the run
-                run = await asyncio.to_thread(
-                    client.agents.runs.create_and_process,
-                    thread_id=conversation_id,
-                    agent_id=self.ai_foundry_settings.agent_id
-                )
-                
-                # Get the latest messages after the run completes
-                messages = await asyncio.to_thread(
-                    client.agents.messages.list,
-                    thread_id=conversation_id
-                )
-                
-                response_text = ""
-                attachments = []
-                seen_citation_urls = set()  # Track seen URLs to avoid duplicates
-                
-                # Extract the assistant's response (most recent message)
-                # messages is an ItemPaged iterator, convert to list
-                messages_list = list(messages)
-                
-                if messages_list and len(messages_list) > 0:
-                    # Find the first assistant message
-                    for message in messages_list:
-                        if message.role == "assistant":
-                            # Extract content from each content item
-                            for content in message.content:
-                                # Check if content has text attribute (duck typing)
-                                if hasattr(content, 'text'):
-                                    if hasattr(content.text, 'value'):
-                                        response_text = content.text.value
-                                    
-                                    # Check for annotations (files, citations)
-                                    if hasattr(content.text, 'annotations'):
-                                        annotations = content.text.annotations
-                                        if annotations:
-                                            for annotation in annotations:
-                                                # Extract url_citation for Fabric Data Agent
-                                                if hasattr(annotation, 'url_citation') and annotation.url_citation:
-                                                    url_citation = annotation.url_citation
-                                                    citation_url = url_citation.get('url') if isinstance(url_citation, dict) else getattr(url_citation, 'url', None)
-                                                    
-                                                    # Skip duplicate URLs
-                                                    if citation_url and citation_url in seen_citation_urls:
-                                                        continue
-                                                    if citation_url:
-                                                        seen_citation_urls.add(citation_url)
-                                                    
-                                                    citation_title = url_citation.get('title') if isinstance(url_citation, dict) else getattr(url_citation, 'title', 'Source')
-                                                    
-                                                    attachments.append({
-                                                        "contentType": "url_citation",
-                                                        "url": citation_url,
-                                                        "title": citation_title,
-                                                        "name": citation_title or "Source",
-                                                        "text": getattr(annotation, 'text', '')
-                                                    })
-                                                # Extract file_citation for file-based sources
-                                                elif hasattr(annotation, 'file_citation') and annotation.file_citation:
-                                                    file_citation = annotation.file_citation
-                                                    file_id = file_citation.get('file_id') if isinstance(file_citation, dict) else getattr(file_citation, 'file_id', None)
-                                                    quote = file_citation.get('quote') if isinstance(file_citation, dict) else getattr(file_citation, 'quote', '')
-                                                    
-                                                    attachments.append({
-                                                        "contentType": "file_citation",
-                                                        "fileId": file_id,
-                                                        "quote": quote,
-                                                        "name": "File Source",
-                                                        "text": getattr(annotation, 'text', '')
-                                                    })
-                                                # Fallback for other annotation types
-                                                else:
-                                                    attachments.append({
-                                                        "contentType": "annotation",
-                                                        "name": getattr(annotation, 'text', 'Annotation'),
-                                                        "text": getattr(annotation, 'text', '')
-                                                    })
-                            
-                            break
-                else:
-                    logger.warning(f"No messages found in thread after run completed")
-                
-                # If no response was collected, use a default message
-                if not response_text:
-                    logger.warning(f"No assistant response text extracted, using fallback")
-                    response_text = "I received your message."
-                
-                # Process response for visualizations if visualization service is available
-                if self.visualization_service and response_text:
-                    response_text = self.visualization_service.process_message_for_visualizations(response_text)
-                
-                # Generate follow-up questions based on conversation history
-                suggested_questions = []
-                try:
-                    # Build conversation history from recent messages
-                    conversation_history = [
-                        {"role": "user", "content": message_text},
-                        {"role": "assistant", "content": response_text}
-                    ]
-                    # Get recent messages for better context (optional, for richer suggestions)
-                    try:
-                        # Get latest 6 messages from the current conversation from Cosmos
-                        
-                        recent_messages = await self.get_conversation_messages(
-                            conversation_id=conversation_id,
-                            user_token=user_token,
-                            limit=6
-                        )
-
-                        # Convert to simpler format and reverse (oldest first)
-                        for msg in reversed(recent_messages[2:]):  # Skip the two we just added
-                            if msg.get("content"):
-                                conversation_history.insert(0, {
-                                    "role": msg["role"],
-                                    "content": msg["content"][0].get("text", "") if msg["content"] else ""
-                                })
-                    except Exception as e:
-                        logger.debug(f"Could not retrieve full conversation history: {e}")
+                with tracer.start_as_current_span("send-message") as span:
+                    span.set_attribute("ai_foundry.thread_id", conversation_id)
+                    span.set_attribute("ai_foundry.agent_id", self.ai_foundry_settings.agent_id)
+                    span.set_attribute("ai_foundry.user_id", user_id)
                     
-                    # Generate questions
-                    suggested_questions = await self.generate_follow_up_questions(
-                        conversation_history=conversation_history,
-                        user_token=user_token,
-                        max_questions=3
+                    # Cancel any lingering active runs before sending a new message.
+                    # This handles the case where the user clicked Stop but the run
+                    # hasn't finished cancelling yet (in_progress → cancelling → cancelled).
+                    await self._ensure_no_active_runs(client, conversation_id)
+                    
+                    # Add user message to thread
+                    await asyncio.to_thread(
+                        client.agents.messages.create,
+                        thread_id=conversation_id,
+                        role="user",
+                        content=message_text
                     )
-                except Exception as e:
-                    logger.warning(f"Failed to generate follow-up questions: {e}")
-                    # Continue without suggestions
-                
-                return {
-                    "success": True,
-                    "response": response_text,
-                    "text": response_text,
-                    "attachments": attachments,
-                    "conversationId": conversation_id,
-                    "runId": run.id,
-                    "runStatus": run.status,
-                    "suggestedQuestions": suggested_questions  # Add AI-generated suggestions
-                }
+                    
+                    # Create and poll the run
+                    run = await asyncio.to_thread(
+                        client.agents.runs.create_and_process,
+                        thread_id=conversation_id,
+                        agent_id=self.ai_foundry_settings.agent_id
+                    )
+                    span.set_attribute("ai_foundry.run_id", run.id)
+                    span.set_attribute("ai_foundry.run_status", run.status)
+                    
+                    # Get the latest messages after the run completes
+                    messages = await asyncio.to_thread(
+                        client.agents.messages.list,
+                        thread_id=conversation_id
+                    )
+                    
+                    response_text = ""
+                    attachments = []
+                    seen_citation_urls = set()  # Track seen URLs to avoid duplicates
+                    
+                    # Extract the assistant's response (most recent message)
+                    # messages is an ItemPaged iterator, convert to list
+                    messages_list = list(messages)
+                    
+                    if messages_list and len(messages_list) > 0:
+                        # Find the first assistant message
+                        for message in messages_list:
+                            if message.role == "assistant":
+                                # Extract content from each content item
+                                for content in message.content:
+                                    # Check if content has text attribute (duck typing)
+                                    if hasattr(content, 'text'):
+                                        if hasattr(content.text, 'value'):
+                                            response_text = content.text.value
+                                        
+                                        # Check for annotations (files, citations)
+                                        if hasattr(content.text, 'annotations'):
+                                            annotations = content.text.annotations
+                                            if annotations:
+                                                for annotation in annotations:
+                                                    # Extract url_citation for Fabric Data Agent
+                                                    if hasattr(annotation, 'url_citation') and annotation.url_citation:
+                                                        url_citation = annotation.url_citation
+                                                        citation_url = url_citation.get('url') if isinstance(url_citation, dict) else getattr(url_citation, 'url', None)
+                                                        
+                                                        # Skip duplicate URLs
+                                                        if citation_url and citation_url in seen_citation_urls:
+                                                            continue
+                                                        if citation_url:
+                                                            seen_citation_urls.add(citation_url)
+                                                        
+                                                        citation_title = url_citation.get('title') if isinstance(url_citation, dict) else getattr(url_citation, 'title', 'Source')
+                                                        
+                                                        attachments.append({
+                                                            "contentType": "url_citation",
+                                                            "url": citation_url,
+                                                            "title": citation_title,
+                                                            "name": citation_title or "Source",
+                                                            "text": getattr(annotation, 'text', '')
+                                                        })
+                                                    # Extract file_citation for file-based sources
+                                                    elif hasattr(annotation, 'file_citation') and annotation.file_citation:
+                                                        file_citation = annotation.file_citation
+                                                        file_id = file_citation.get('file_id') if isinstance(file_citation, dict) else getattr(file_citation, 'file_id', None)
+                                                        quote = file_citation.get('quote') if isinstance(file_citation, dict) else getattr(file_citation, 'quote', '')
+                                                        
+                                                        attachments.append({
+                                                            "contentType": "file_citation",
+                                                            "fileId": file_id,
+                                                            "quote": quote,
+                                                            "name": "File Source",
+                                                            "text": getattr(annotation, 'text', '')
+                                                        })
+                                                    # Fallback for other annotation types
+                                                    else:
+                                                        attachments.append({
+                                                            "contentType": "annotation",
+                                                            "name": getattr(annotation, 'text', 'Annotation'),
+                                                            "text": getattr(annotation, 'text', '')
+                                                        })
+                                
+                                break
+                    else:
+                        logger.warning(f"No messages found in thread after run completed")
+                    
+                    # If no response was collected, use a default message
+                    if not response_text:
+                        logger.warning(f"No assistant response text extracted, using fallback")
+                        response_text = "I received your message."
+                    
+                    # Process response for visualizations if visualization service is available
+                    if self.visualization_service and response_text:
+                        response_text = self.visualization_service.process_message_for_visualizations(response_text)
+                    
+                    # Generate follow-up questions based on conversation history
+                    suggested_questions = []
+                    try:
+                        # Build conversation history from recent messages
+                        conversation_history = [
+                            {"role": "user", "content": message_text},
+                            {"role": "assistant", "content": response_text}
+                        ]
+                        # Get recent messages for better context (optional, for richer suggestions)
+                        try:
+                            # Get latest 6 messages from the current conversation from Cosmos
+                            
+                            recent_messages = await self.get_conversation_messages(
+                                conversation_id=conversation_id,
+                                user_token=user_token,
+                                limit=6
+                            )
+
+                            # Convert to simpler format and reverse (oldest first)
+                            for msg in reversed(recent_messages[2:]):  # Skip the two we just added
+                                if msg.get("content"):
+                                    conversation_history.insert(0, {
+                                        "role": msg["role"],
+                                        "content": msg["content"][0].get("text", "") if msg["content"] else ""
+                                    })
+                        except Exception as e:
+                            logger.debug(f"Could not retrieve full conversation history: {e}")
+                        
+                        # Generate questions
+                        suggested_questions = await self.generate_follow_up_questions(
+                            conversation_history=conversation_history,
+                            user_token=user_token,
+                            max_questions=3
+                        )
+                    except Exception as e:
+                        logger.warning(f"Failed to generate follow-up questions: {e}")
+                        # Continue without suggestions
+                    
+                    return {
+                        "success": True,
+                        "response": response_text,
+                        "text": response_text,
+                        "attachments": attachments,
+                        "conversationId": conversation_id,
+                        "runId": run.id,
+                        "runStatus": run.status,
+                        "suggestedQuestions": suggested_questions  # Add AI-generated suggestions
+                    }
             finally:
                 # Close the client to cleanup aiohttp session
                 await asyncio.to_thread(client.close)
