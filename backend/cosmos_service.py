@@ -125,7 +125,7 @@ class CosmosDBService:
         title: Optional[str] = None,
         metadata: Optional[dict] = None,
         tenant_id: Optional[str] = None,
-        model: str = "gpt-4o-mini",
+        model: str = "pending",
         agent_id: Optional[str] = None,
         session_data: Optional[dict] = None
     ) -> ChatSession:
@@ -562,6 +562,48 @@ class CosmosDBService:
         except Exception as e:
             logger.warning(f"Failed to update session activity for {session_id}: {e}")
     
+    async def update_session_model(self, user_id: str, thread_id: str, model: str) -> bool:
+        """Update the model field on a session identified by its conversation_id (AI Foundry thread ID)."""
+        await self.initialize()
+        
+        if not self.sessions_container:
+            return False
+        
+        try:
+            # Find the session by conversation_id (thread_id) within the user's partition
+            query = "SELECT c.id FROM c WHERE c.conversation_id = @threadId"
+            params = [{"name": "@threadId", "value": thread_id}]
+            
+            items = self.sessions_container.query_items(
+                query=query,
+                parameters=params,
+                partition_key=user_id
+            )
+            items_list = [item async for item in items]
+            
+            if not items_list:
+                logger.warning(f"No session found for thread {thread_id} and user {user_id}")
+                return False
+            
+            session_id = items_list[0]['id']
+            session_item = await self.sessions_container.read_item(
+                item=session_id,
+                partition_key=user_id
+            )
+            
+            session_item['model'] = model
+            await self.sessions_container.replace_item(
+                item=session_id,
+                body=session_item
+            )
+            
+            logger.info(f"Updated session {session_id} model to '{model}'")
+            return True
+            
+        except Exception as e:
+            logger.warning(f"Failed to update session model for thread {thread_id}: {e}")
+            return False
+
     async def update_session_data(self, session_id: str, user_id: str, session_data: dict) -> bool:
         """Update session_data on an existing session (e.g. to store AI Foundry thread ID)."""
         await self.initialize()

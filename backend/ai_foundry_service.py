@@ -547,6 +547,7 @@ class AIFoundryService:
                         "conversationId": conversation_id,
                         "runId": run.id,
                         "runStatus": run.status,
+                        "model": getattr(run, 'model', None),
                         "suggestedQuestions": suggested_questions  # Add AI-generated suggestions
                     }
             finally:

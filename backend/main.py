@@ -1344,6 +1344,18 @@ async def send_message_to_ai_foundry(
             for idx, att in enumerate(response.get('attachments', [])):
                 logger.info(f"  📎 Attachment {idx}: contentType={att.get('contentType')}, has_content={bool(att.get('content'))}, name={att.get('name')}")
         
+        # Update Cosmos session with the actual model from the run response
+        run_model = response.get('model')
+        if run_model and conversation_service:
+            try:
+                await conversation_service.update_session_model(
+                    user_id=user_id,
+                    thread_id=conversation_id,
+                    model=run_model
+                )
+            except Exception as e:
+                logger.warning(f"Failed to update session model: {e}")
+        
         return response
         
     except Exception as e:
@@ -1603,8 +1615,11 @@ async def create_conversation(
         )
     
     try:
-        # Generate a new agent conversation ID (e.g., for Copilot Studio)
-        agent_conversation_id = str(uuid.uuid4())
+        # Use the AI Foundry thread ID from session_data if available,
+        # otherwise generate a new UUID (e.g., for Copilot Studio)
+        agent_conversation_id = (
+            request.session_data.get("conversationId") if request.session_data else None
+        ) or str(uuid.uuid4())
         
         conversation = await conversation_service.create_conversation(
             user_id=user_id,

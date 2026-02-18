@@ -343,6 +343,24 @@ class ConversationService:
         
         return False
     
+    async def update_session_model(
+        self,
+        user_id: str,
+        thread_id: str,
+        model: str
+    ) -> bool:
+        """
+        Update the model on a session identified by its AI Foundry thread ID.
+        Called after the first run completes to store the actual model used by the agent.
+        """
+        if self.cosmos_service:
+            try:
+                return await self.cosmos_service.update_session_model(user_id, thread_id, model)
+            except Exception as e:
+                logger.warning(f"Failed to update session model for thread {thread_id}: {e}")
+                return False
+        return False
+
     async def update_session_data(
         self,
         conversation_id: str,

@@ -494,6 +494,7 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
   const processedNewConversationRef = useRef<boolean>(false); // Track if we've processed a new conversation request
   const abortControllerRef = useRef<AbortController | null>(null); // Track abort controller for canceling requests
   const navigatingAwayRef = useRef<boolean>(false); // Track if abort is due to navigation (not user Stop button)
+  const sessionInitRef = useRef<boolean>(false); // Guard against duplicate session initialization (React StrictMode)
   const [session, setSession] = useState<AIFoundrySession | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
   const [inputText, setInputText] = useState('');
@@ -634,11 +635,19 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
       }
     };
 
-    // Only initialize session once when component mounts
-    if (!session) {
-      initializeSession();
-    }
-  }, [session]);
+    // Only initialize session on first mount, and only if not navigating to an existing conversation
+    // sessionInitRef prevents duplicate calls from React StrictMode double-mounting
+    if (sessionInitRef.current) return;
+
+    const navigationState = location.state as { conversationId?: string; newConversation?: boolean } | null;
+    // Skip init if navigating to a specific conversation — loadConversationById will handle session
+    // But DO init if newConversation is set (we still need a fresh thread for the new chat)
+    if (navigationState?.conversationId) return;
+
+    sessionInitRef.current = true;
+    initializeSession();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
 
 
