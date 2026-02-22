@@ -2,6 +2,7 @@
 Microsoft Fabric Lakehouse SQL query service.
 Executes SQL queries against Fabric Lakehouse using authenticated connections.
 """
+import asyncio
 from typing import List, Dict, Any, Optional, Union
 from azure.identity import DefaultAzureCredential, ManagedIdentityCredential, ClientSecretCredential, AzureCliCredential
 import struct
@@ -57,13 +58,48 @@ class FabricLakehouseService:
             
         return self._credential
     
+    def _connect_sync(self):
+        """
+        Synchronous connection helper — runs in a thread via asyncio.to_thread.
+        All blocking I/O (credential.get_token, pyodbc.connect) happens here.
+        """
+        import pyodbc
+        
+        credential = self._get_credential()
+        token = credential.get_token("https://analysis.windows.net/powerbi/api/.default")
+        
+        token_bytes = token.token.encode("utf-16-le")
+        token_struct = struct.pack(f'<I{len(token_bytes)}s', len(token_bytes), token_bytes)
+        SQL_COPT_SS_ACCESS_TOKEN = 1256
+        
+        server_name = self.config.endpoint.replace("https://", "").replace("http://", "")
+        connection_string = (
+            f"Driver={{ODBC Driver 18 for SQL Server}};"
+            f"Server={server_name};"
+            f"Database={self.config.lakehouse_id};"
+            f"Encrypt=yes;"
+            f"TrustServerCertificate=no;"
+            f"Connection Timeout={self.config.connection_timeout};"
+        )
+        
+        logger.info(f"Connecting to Fabric SQL endpoint:")
+        logger.info(f"  Server: {server_name}")
+        logger.info(f"  Database: {self.config.lakehouse_id}")
+        conn = pyodbc.connect(
+            connection_string,
+            attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct}
+        )
+        logger.info(f"✓ Successfully connected to Fabric Lakehouse: {self.config.lakehouse_id}")
+        return conn
+
     async def connect(self):
         """
         Establish connection to Fabric Lakehouse SQL endpoint.
         Uses pyodbc with Azure AD authentication.
+        Blocking I/O is offloaded to a thread to avoid blocking the event loop.
         """
         try:
-            import pyodbc
+            import pyodbc  # noqa: F401 — verify availability
         except ImportError:
             raise ImportError(
                 "pyodbc is required for Fabric Lakehouse connection. "
@@ -71,46 +107,7 @@ class FabricLakehouseService:
             )
         
         try:
-            # Get authentication credential
-            credential = self._get_credential()
-            
-            # Get access token for Fabric/Power BI
-            # Fabric SQL endpoints use the Power BI resource scope
-            token = credential.get_token("https://analysis.windows.net/powerbi/api/.default")
-            
-            # Convert token to bytes for SQL Server authentication
-            token_bytes = token.token.encode("utf-16-le")
-            token_struct = struct.pack(f'<I{len(token_bytes)}s', len(token_bytes), token_bytes)
-            
-            # SQL_COPT_SS_ACCESS_TOKEN is 1256
-            SQL_COPT_SS_ACCESS_TOKEN = 1256
-            
-            # Build connection string
-            # Strip https:// or http:// from endpoint if present (ODBC expects hostname only)
-            server_name = self.config.endpoint.replace("https://", "").replace("http://", "")
-            
-            # Format: Server=<hostname>;Database=<lakehouse_id>;Encrypt=yes;TrustServerCertificate=no;
-            connection_string = (
-                f"Driver={{ODBC Driver 18 for SQL Server}};"
-                f"Server={server_name};"
-                f"Database={self.config.lakehouse_id};"
-                f"Encrypt=yes;"
-                f"TrustServerCertificate=no;"
-                f"Connection Timeout={self.config.connection_timeout};"
-            )
-            
-            # Connect with access token
-            logger.info(f"Connecting to Fabric SQL endpoint:")
-            logger.info(f"  Server: {server_name}")
-            logger.info(f"  Database: {self.config.lakehouse_id}")
-            logger.info(f"  Full Connection String: {connection_string}")
-            self.connection = pyodbc.connect(
-                connection_string,
-                attrs_before={SQL_COPT_SS_ACCESS_TOKEN: token_struct}
-            )
-            
-            logger.info(f"✓ Successfully connected to Fabric Lakehouse: {self.config.lakehouse_id}")
-            
+            self.connection = await asyncio.to_thread(self._connect_sync)
         except ImportError as e:
             logger.error(f"Missing required package: {e}")
             raise
@@ -118,9 +115,28 @@ class FabricLakehouseService:
             logger.error(f"Failed to connect to Fabric Lakehouse: {e}")
             raise
     
+    def _execute_query_sync(self, query: str, params: Optional[tuple] = None) -> List[Dict[str, Any]]:
+        """
+        Synchronous query helper — runs in a thread via asyncio.to_thread.
+        All blocking cursor operations happen here.
+        """
+        cursor = self.connection.cursor()
+        self.connection.timeout = self.config.query_timeout
+        
+        if params:
+            cursor.execute(query, params)
+        else:
+            cursor.execute(query)
+        
+        columns = [column[0] for column in cursor.description]
+        results = [dict(zip(columns, row)) for row in cursor.fetchall()]
+        cursor.close()
+        return results
+
     async def execute_query(self, query: str, params: Optional[tuple] = None) -> List[Dict[str, Any]]:
         """
         Execute SQL query and return results as list of dictionaries.
+        Blocking pyodbc calls are offloaded to a thread.
         
         Args:
             query: SQL query to execute
@@ -133,33 +149,13 @@ class FabricLakehouseService:
             await self.connect()
         
         try:
-            cursor = self.connection.cursor()
-            
-            # Set query timeout using connection attribute (not cursor.timeout)
-            # This must be done before executing the query
-            self.connection.timeout = self.config.query_timeout
-            
-            # Execute query with or without parameters
-            if params:
-                cursor.execute(query, params)
-            else:
-                cursor.execute(query)
-            
-            # Get column names
-            columns = [column[0] for column in cursor.description]
-            
-            # Fetch results and convert to dictionaries
-            results = []
-            for row in cursor.fetchall():
-                results.append(dict(zip(columns, row)))
-            
-            cursor.close()
+            results = await asyncio.to_thread(self._execute_query_sync, query, params)
             logger.info(f"Query executed successfully, returned {len(results)} rows")
             return results
             
         except Exception as e:
             logger.error(f"Query execution failed: {e}")
-            logger.error(f"Query: {query}")  # Log full query
+            logger.error(f"Query: {query}")
             raise
     
     async def execute_scalar(self, query: str, params: Optional[tuple] = None) -> Any:

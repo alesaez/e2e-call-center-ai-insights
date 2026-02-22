@@ -1,4 +1,4 @@
-import React, { ReactNode, useState, useEffect, useCallback } from 'react';
+import React, { ReactNode, useState, useEffect, useCallback, useRef } from 'react';
 import {
   Box,
   Drawer,
@@ -76,6 +76,7 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
   const [chatSubmenuOpen, setChatSubmenuOpen] = useState(false);
   const [conversations, setConversations] = useState<ConversationSummary[]>([]);
   const [conversationsLoading, setConversationsLoading] = useState(false);
+  const conversationsLoadingRef = useRef(false);
   const [conversationsError, setConversationsError] = useState<string | null>(null);
   const [showAllConversations, setShowAllConversations] = useState(false);
   
@@ -83,6 +84,7 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
   const [aiFoundrySubmenuOpen, setAiFoundrySubmenuOpen] = useState(false);
   const [aiFoundryConversations, setAiFoundryConversations] = useState<ConversationSummary[]>([]);
   const [aiFoundryConversationsLoading, setAiFoundryConversationsLoading] = useState(false);
+  const aiFoundryConversationsLoadingRef = useRef(false);
   const [aiFoundryConversationsError, setAiFoundryConversationsError] = useState<string | null>(null);
   const [showAllAiFoundryConversations, setShowAllAiFoundryConversations] = useState(false);
   
@@ -133,8 +135,9 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
 
   // Load conversations when chat submenu is opened
   const loadConversations = useCallback(async () => {
-    if (conversationsLoading) return;
+    if (conversationsLoadingRef.current) return;
 
+    conversationsLoadingRef.current = true;
     setConversationsLoading(true);
     setConversationsError(null);
     
@@ -149,27 +152,29 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
       setConversationsError('Failed to load conversations');
       console.error('Failed to load conversations:', error);
     } finally {
+      conversationsLoadingRef.current = false;
       setConversationsLoading(false);
     }
-  }, [conversationsLoading]);
+  }, []);
 
   const loadAiFoundryConversations = useCallback(async () => {
-    if (aiFoundryConversationsLoading) return;
+    if (aiFoundryConversationsLoadingRef.current) return;
 
+    aiFoundryConversationsLoadingRef.current = true;
     setAiFoundryConversationsLoading(true);
     setAiFoundryConversationsError(null);
     
     try {
-      // First, get the session to retrieve the actual agent ID from backend
+      // Get the agent ID from lightweight config endpoint (no thread creation)
       let aiFoundryAgentId = import.meta.env.VITE_AI_FOUNDRY_AGENT_ID;
       
       try {
-        const sessionResponse = await apiClient.post<{agentId: string}>('/api/ai-foundry/token');
-        if (sessionResponse.data?.agentId) {
-          aiFoundryAgentId = sessionResponse.data.agentId;
+        const configResponse = await apiClient.get<{agentId: string}>('/api/ai-foundry/config');
+        if (configResponse.data?.agentId) {
+          aiFoundryAgentId = configResponse.data.agentId;
         }
-      } catch (sessionError) {
-        console.warn('Could not fetch AI Foundry session, using fallback agent ID');
+      } catch (configError) {
+        console.warn('Could not fetch AI Foundry config, using fallback agent ID');
       }
       
       // Use the actual agent ID from backend or fallback
@@ -181,9 +186,10 @@ function MainLayoutContent({ children, tenantConfig, uiConfig, refreshTrigger }:
       setAiFoundryConversationsError('Failed to load AI Foundry conversations');
       console.error('Failed to load AI Foundry conversations:', error);
     } finally {
+      aiFoundryConversationsLoadingRef.current = false;
       setAiFoundryConversationsLoading(false);
     }
-  }, [aiFoundryConversationsLoading]);
+  }, []);
 
   const handleChatSubmenuToggle = () => {
     const newOpen = !chatSubmenuOpen;

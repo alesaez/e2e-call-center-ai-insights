@@ -3,6 +3,7 @@ Power BI Service for generating embed tokens and retrieving report metadata.
 Uses On-Behalf-Of (OBO) flow to access Power BI with user's permissions.
 """
 import logging
+import asyncio
 from typing import Optional, Dict, Any
 from datetime import datetime, timedelta
 import httpx
@@ -97,6 +98,7 @@ class PowerBIService:
         """
         Acquire Power BI access token.
         Uses Service Principal (app-only) or OBO flow based on configuration.
+        MSAL calls are wrapped in asyncio.to_thread to avoid blocking the event loop.
         
         Args:
             user_access_token: The user's access token (required for OBO flow, ignored for Service Principal)
@@ -111,7 +113,8 @@ class PowerBIService:
             # Service Principal (app-only) authentication
             logger.info("Acquiring Power BI access token via Service Principal")
             
-            result = self.msal_app.acquire_token_for_client(
+            result = await asyncio.to_thread(
+                self.msal_app.acquire_token_for_client,
                 scopes=[self.POWER_BI_SCOPE]
             )
             
@@ -129,7 +132,8 @@ class PowerBIService:
             
             logger.info("Acquiring Power BI access token via OBO flow")
             
-            result = self.msal_app.acquire_token_on_behalf_of(
+            result = await asyncio.to_thread(
+                self.msal_app.acquire_token_on_behalf_of,
                 user_assertion=user_access_token,
                 scopes=[self.POWER_BI_SCOPE]
             )

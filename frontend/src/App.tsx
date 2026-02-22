@@ -1,22 +1,30 @@
 import { Routes, Route, Navigate } from 'react-router-dom';
 import { ThemeProvider } from '@mui/material/styles';
 import CssBaseline from '@mui/material/CssBaseline';
-import { useState, useEffect } from 'react';
+import { useState, useEffect, lazy, Suspense } from 'react';
 import { useMsal } from '@azure/msal-react';
 import { InteractionStatus } from '@azure/msal-browser';
 import LoginPage from './components/LoginPage';
 import ProtectedRoute from './components/ProtectedRoute';
 import MainLayout from './components/MainLayout';
-import DashboardPage from './components/DashboardPage';
-import ChatbotPage from './components/ChatbotPage';
-import AIFoundryPage from './components/AIFoundryPage';
-import SettingsPage from './components/SettingsPage';
-import PowerBIReportPage from './components/PowerBIReportPage';
-import PowerBIReportsPage from './components/PowerBIReportsPage';
 import { createAppTheme, getTenantConfig, TenantConfig, defaultTenantConfig } from './theme/theme';
 import { applyFavicon, updateDocumentTitle } from './config/tenantConfig';
 import { getUIConfig, UIConfig, shouldDisplayTab, getDefaultRoute } from './services/featureConfig';
 import { CircularProgress, Box, Button } from '@mui/material';
+
+// Lazy-load heavy page components to reduce initial bundle size
+const DashboardPage = lazy(() => import('./components/DashboardPage'));
+const ChatbotPage = lazy(() => import('./components/ChatbotPage'));
+const AIFoundryPage = lazy(() => import('./components/AIFoundryPage'));
+const SettingsPage = lazy(() => import('./components/SettingsPage'));
+const PowerBIReportPage = lazy(() => import('./components/PowerBIReportPage'));
+const PowerBIReportsPage = lazy(() => import('./components/PowerBIReportsPage'));
+
+const PageLoader = () => (
+  <Box display="flex" justifyContent="center" alignItems="center" height="100%">
+    <CircularProgress />
+  </Box>
+);
 
 function App() {
   const { accounts, inProgress, instance } = useMsal();
@@ -211,6 +219,7 @@ function App() {
   return (
     <ThemeProvider theme={theme}>
       <CssBaseline />
+      <Suspense fallback={<PageLoader />}>
       <Routes>
         <Route path="/login" element={<LoginPage uiConfig={uiConfig} />} />
         
@@ -309,6 +318,7 @@ function App() {
           <Route path="*" element={<Navigate to="/login" replace />} />
         )}
       </Routes>
+      </Suspense>
     </ThemeProvider>
   );
 }

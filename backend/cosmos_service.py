@@ -229,15 +229,27 @@ class CosmosDBService:
             
             logger.info(f"✓ Cosmos DB: Found {len(sessions)} sessions for user {user_id}")
             
-            # For each session, get message count from Messages container
+            # Fetch message counts and last messages for ALL sessions in parallel
+            # instead of serially (N+1 → 2 parallel batches)
+            async def _get_session_extras(session):
+                """Fetch count + last message concurrently for one session."""
+                count, last_msg = await asyncio.gather(
+                    self._get_message_count(session['id']),
+                    self._get_last_message(session['id'])
+                )
+                return count, last_msg
+            
+            extras = await asyncio.gather(
+                *[_get_session_extras(s) for s in sessions],
+                return_exceptions=True
+            )
+            
             summaries = []
-            for session in sessions:
+            for session, extra in zip(sessions, extras):
                 try:
-                    # Count messages for this session
-                    message_count = await self._get_message_count(session['id'])
-                    
-                    # Get last message content
-                    last_message = await self._get_last_message(session['id'])
+                    if isinstance(extra, Exception):
+                        raise extra
+                    message_count, last_message = extra
                     
                     summary = ConversationSummary(
                         id=session['id'],

@@ -504,36 +504,21 @@ class AIFoundryService:
                     # Generate follow-up questions based on conversation history
                     suggested_questions = []
                     try:
-                        # Build conversation history from recent messages
+                        # Build conversation from the current exchange only
+                        # (avoids a redundant OBO + API call to get_conversation_messages
+                        #  which was adding 1-3s per chat turn)
                         conversation_history = [
                             {"role": "user", "content": message_text},
                             {"role": "assistant", "content": response_text}
                         ]
-                        # Get recent messages for better context (optional, for richer suggestions)
-                        try:
-                            # Get latest 6 messages from the current conversation from Cosmos
-                            
-                            recent_messages = await self.get_conversation_messages(
-                                conversation_id=conversation_id,
-                                user_token=user_token,
-                                limit=6
-                            )
-
-                            # Convert to simpler format and reverse (oldest first)
-                            for msg in reversed(recent_messages[2:]):  # Skip the two we just added
-                                if msg.get("content"):
-                                    conversation_history.insert(0, {
-                                        "role": msg["role"],
-                                        "content": msg["content"][0].get("text", "") if msg["content"] else ""
-                                    })
-                        except Exception as e:
-                            logger.debug(f"Could not retrieve full conversation history: {e}")
                         
-                        # Generate questions
+                        # Generate questions using the current exchange context
+                        # Pass pre-acquired token to avoid redundant OBO exchange
                         suggested_questions = await self.generate_follow_up_questions(
                             conversation_history=conversation_history,
                             user_token=user_token,
-                            max_questions=3
+                            max_questions=3,
+                            azure_ai_token=azure_ai_token
                         )
                     except Exception as e:
                         logger.warning(f"Failed to generate follow-up questions: {e}")
@@ -602,7 +587,8 @@ class AIFoundryService:
         self,
         conversation_history: List[Dict],
         user_token: str,
-        max_questions: int = 5
+        max_questions: int = 5,
+        azure_ai_token: Optional[str] = None
     ) -> List[str]:
         """
         Generate contextual follow-up questions using Azure OpenAI.
@@ -611,6 +597,7 @@ class AIFoundryService:
             conversation_history: Recent messages from the conversation (list of {role, content} dicts)
             user_token: User's access token for OBO flow
             max_questions: Maximum number of questions to generate (default: 5)
+            azure_ai_token: Pre-acquired Azure AI token (avoids redundant OBO exchange)
             
         Returns:
             List of 3-5 suggested follow-up questions
@@ -626,8 +613,9 @@ class AIFoundryService:
                 logger.debug("OpenAI endpoint not configured, skipping question generation")
                 return []
             
-            # Get Azure AI token via OBO flow
-            azure_ai_token = self._get_azure_ai_token(user_token)
+            # Reuse pre-acquired token if available, otherwise acquire via OBO
+            if not azure_ai_token:
+                azure_ai_token = self._get_azure_ai_token(user_token)
             
             # Create Azure OpenAI client
             openai_client = AzureOpenAI(

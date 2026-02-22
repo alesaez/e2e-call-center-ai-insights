@@ -23,6 +23,17 @@ class CopilotStudioService:
         self.settings = settings
         self.copilot_settings = settings.copilot_studio
         self.visualization_service = visualization_service
+        
+        # Reuse a single MSAL app to benefit from its internal token cache
+        if self.copilot_settings.app_client_secret:
+            self._msal_app = ConfidentialClientApplication(
+                client_id=self.copilot_settings.app_client_id,
+                client_credential=self.copilot_settings.app_client_secret,
+                authority=f"https://login.microsoftonline.com/{self.copilot_settings.tenant_id}"
+            )
+        else:
+            self._msal_app = None
+        
         logger.info(f"✓ Copilot Studio service initialized: environment_id={self.copilot_settings.environment_id}")
     
     def _create_connection_settings(self) -> ConnectionSettings:
@@ -35,9 +46,10 @@ class CopilotStudioService:
             custom_power_platform_cloud=None,
         )
     
-    def _get_power_platform_token(self, user_token: str) -> str:
+    async def _get_power_platform_token(self, user_token: str) -> str:
         """
         Get Power Platform token using On-Behalf-Of flow.
+        The MSAL call is run in a thread to avoid blocking the event loop.
         
         Args:
             user_token: The user's JWT token from the frontend
@@ -48,17 +60,13 @@ class CopilotStudioService:
         Raises:
             Exception: If token acquisition fails
         """
-        if not self.copilot_settings.app_client_secret:
+        if not self._msal_app:
             raise ValueError("Client secret not configured")
         
-        msal_app = ConfidentialClientApplication(
-            client_id=self.copilot_settings.app_client_id,
-            client_credential=self.copilot_settings.app_client_secret,
-            authority=f"https://login.microsoftonline.com/{self.copilot_settings.tenant_id}"
-        )
-        
-        # Use On-Behalf-Of flow to exchange user token for Power Platform token
-        result = msal_app.acquire_token_on_behalf_of(
+        import asyncio
+        # Use the shared MSAL app (benefits from token cache)
+        result = await asyncio.to_thread(
+            self._msal_app.acquire_token_on_behalf_of,
             user_assertion=user_token,
             scopes=["https://api.powerplatform.com/.default"]
         )
@@ -70,7 +78,7 @@ class CopilotStudioService:
         
         return result["access_token"]
     
-    def _create_client(self, user_token: Optional[str] = None) -> CopilotClient:
+    async def _create_client(self, user_token: Optional[str] = None) -> CopilotClient:
         """
         Create a Copilot Studio client instance.
         
@@ -86,8 +94,8 @@ class CopilotStudioService:
             logger.warning("Creating Copilot client without token (no secret or user token)")
             return CopilotClient(connection_settings, None)
         
-        # Get Power Platform token via On-Behalf-Of
-        power_platform_token = self._get_power_platform_token(user_token)
+        # Get Power Platform token via On-Behalf-Of (now async)
+        power_platform_token = await self._get_power_platform_token(user_token)
         return CopilotClient(connection_settings, power_platform_token)
     
     async def start_conversation(
@@ -108,7 +116,7 @@ class CopilotStudioService:
             Dict containing conversationId, welcomeMessage, and session details
         """
         try:
-            client = self._create_client(user_token)
+            client = await self._create_client(user_token)
             
             # Start conversation - returns an async generator
             welcome_message = ""
@@ -159,7 +167,7 @@ class CopilotStudioService:
             Dict containing response text, attachments, and activities
         """
         try:
-            client = self._create_client(user_token)
+            client = await self._create_client(user_token)
             
             response_text = ""
             attachments = []
@@ -238,7 +246,7 @@ class CopilotStudioService:
             Dict containing response text, attachments, and activities
         """
         try:
-            client = self._create_client(user_token)
+            client = await self._create_client(user_token)
             
             # Create InvokeResponse activity
             invoke_activity = Activity(

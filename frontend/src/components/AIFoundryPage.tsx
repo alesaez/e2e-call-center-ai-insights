@@ -1521,7 +1521,13 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
             <Box sx={{ flexGrow: 1, overflow: 'auto', p: 2 }}>
               <MessageListErrorBoundary>
                 <List>
-                {messages.map((message, index) => {
+                {(() => {
+                  // Pre-compute the last user message index once — O(n) instead of O(n^2)
+                  let lastUserMessageIndex = -1;
+                  for (let i = messages.length - 1; i >= 0; i--) {
+                    if (messages[i].sender === 'user') { lastUserMessageIndex = i; break; }
+                  }
+                  return messages.map((message, index) => {
                   // Safe message rendering with error handling
                   try {
                     if (!message || !message.id) {
@@ -1529,9 +1535,8 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
                       return null;
                     }
 
-                    // Check if this is the last user message
-                    const isLastUserMessage = message.sender === 'user' && 
-                      !messages.slice(index + 1).some(m => m.sender === 'user');
+                    // Check if this is the last user message (O(1) lookup)
+                    const isLastUserMessage = message.sender === 'user' && index === lastUserMessageIndex;
                     
                     // Skip welcome message for hover actions
                     const isWelcomeMessage = message.id === 'welcome';
@@ -1775,7 +1780,8 @@ export default function AIFoundryPage({ uiConfig }: AIFoundryPageProps) {
                       </ListItem>
                     );
                   }
-                })}
+                })
+                })()}
                 
                 {sending && (
                   <ListItem sx={{ flexDirection: 'column', alignItems: 'flex-start', px: 0 }}>

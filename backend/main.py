@@ -322,21 +322,25 @@ async def audit_middleware(request: Request, call_next):
     
     return response
 
-# Cache for JWKS (JSON Web Key Set)
+# Cache for JWKS (JSON Web Key Set) with TTL
 _jwks_cache: Optional[Dict] = None
+_jwks_cache_time: float = 0.0
+_JWKS_CACHE_TTL: float = 24 * 60 * 60  # 24 hours
 
 # Token validation cache (to reduce JWT validation overhead)
 from cachetools import TTLCache
 _token_validation_cache = TTLCache(maxsize=1000, ttl=300)  # 5 minute TTL
 
-async def get_jwks() -> Dict:
+async def get_jwks(force_refresh: bool = False) -> Dict:
     """
     Fetch JSON Web Key Set from Microsoft Entra ID.
-    Implements caching to reduce external calls.
+    Implements caching with a 24-hour TTL and supports forced refresh
+    when a signing key is not found (Microsoft rotates keys).
     """
-    global _jwks_cache
+    global _jwks_cache, _jwks_cache_time
     
-    if _jwks_cache is not None:
+    now = time.time()
+    if not force_refresh and _jwks_cache is not None and (now - _jwks_cache_time) < _JWKS_CACHE_TTL:
         return _jwks_cache
     
     settings = get_settings()
@@ -350,6 +354,8 @@ async def get_jwks() -> Dict:
             response = await client.get(jwks_url, timeout=10.0)
             response.raise_for_status()
             _jwks_cache = response.json()
+            _jwks_cache_time = now
+            logger.info("JWKS cache refreshed" + (" (forced)" if force_refresh else ""))
             return _jwks_cache
     except Exception as e:
         logger.error(f"Failed to fetch JWKS: {e}")
@@ -402,6 +408,21 @@ async def verify_token(
                     "e": key["e"]
                 }
                 break
+        
+        # Key-miss: Microsoft may have rotated keys — refresh JWKS and retry once
+        if rsa_key is None:
+            logger.warning(f"Signing key {unverified_header['kid']} not in cache, forcing JWKS refresh")
+            jwks = await get_jwks(force_refresh=True)
+            for key in jwks.get("keys", []):
+                if key["kid"] == unverified_header["kid"]:
+                    rsa_key = {
+                        "kty": key["kty"],
+                        "kid": key["kid"],
+                        "use": key["use"],
+                        "n": key["n"],
+                        "e": key["e"]
+                    }
+                    break
         
         if rsa_key is None:
             raise HTTPException(
@@ -1265,6 +1286,23 @@ async def send_card_response_to_copilot(
 # ============================================================================
 # Azure AI Foundry Agent Endpoints
 # ============================================================================
+
+@app.get("/api/ai-foundry/config")
+async def get_ai_foundry_config(
+    credentials: HTTPAuthorizationCredentials = Depends(security),
+    user_permissions: UserPermissions = Depends(require_permission(Permission.AI_FOUNDRY_QUERY))
+):
+    """
+    Return lightweight AI Foundry configuration (agentId) without creating a thread.
+    Used by the sidebar to load conversations without the overhead of starting a session.
+    """
+    if not ai_foundry_service:
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Azure AI Foundry is not configured."
+        )
+    
+    return {"agentId": ai_foundry_service.ai_foundry_settings.agent_id}
 
 @app.post("/api/ai-foundry/token")
 async def get_ai_foundry_token(

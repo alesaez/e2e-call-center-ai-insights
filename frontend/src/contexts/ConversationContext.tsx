@@ -1,4 +1,4 @@
-import { createContext, useContext, useCallback, ReactNode, useState } from 'react';
+import { createContext, useContext, useCallback, useMemo, ReactNode, useState } from 'react';
 
 interface ConversationContextType {
   refreshConversations: () => Promise<void>;
@@ -33,12 +33,15 @@ export const ConversationProvider = ({ children, onRefreshConversations }: Conve
     await onRefreshConversations();
   }, [onRefreshConversations]);
 
+  // Memoize context value to prevent cascading re-renders of all consumers
+  const value = useMemo(() => ({
+    refreshConversations,
+    currentConversationId,
+    setCurrentConversationId
+  }), [refreshConversations, currentConversationId, setCurrentConversationId]);
+
   return (
-    <ConversationContext.Provider value={{ 
-      refreshConversations, 
-      currentConversationId, 
-      setCurrentConversationId 
-    }}>
+    <ConversationContext.Provider value={value}>
       {children}
     </ConversationContext.Provider>
   );
