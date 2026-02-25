@@ -2,21 +2,14 @@ import React from 'react';
 import ReactDOM from 'react-dom/client';
 import { BrowserRouter } from 'react-router-dom';
 import { MsalProvider } from '@azure/msal-react';
-import { PublicClientApplication } from '@azure/msal-browser';
 import App from './App';
-import { msalConfig } from './authConfig';
+import { msalInstance } from './services/msalInstance';
 
-// Create MSAL instance
-const msalInstance = new PublicClientApplication(msalConfig);
-
-// Initialize MSAL and handle redirects
-await msalInstance.initialize();
-
-// Handle redirect promise to catch redirect response
-msalInstance.handleRedirectPromise().then(() => {
-  // Login redirect handled silently
-}).catch((error) => {
-  console.error('Authentication error:', error);
+// Await redirect handling BEFORE rendering so that accounts are
+// populated when React mounts (prevents flash-to-login on return
+// from Entra ID redirect).
+await msalInstance.handleRedirectPromise().catch((error) => {
+  console.error('Authentication redirect error:', error);
 });
 
 ReactDOM.createRoot(document.getElementById('root')!).render(

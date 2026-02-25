@@ -9,7 +9,7 @@ export const msalConfig: Configuration = {
     postLogoutRedirectUri: import.meta.env.VITE_POST_LOGOUT_REDIRECT_URI || window.location.origin,
   },
   cache: {
-    cacheLocation: 'sessionStorage', // Use sessionStorage for security
+    cacheLocation: 'localStorage', // Persist tokens across tabs / page refreshes
     storeAuthStateInCookie: false, // Set to true for IE11 or Edge
   },
   system: {
