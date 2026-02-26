@@ -107,6 +107,9 @@ if (-not (Get-Variable -Name "PrivateEndpointsSubnetName" -ErrorAction SilentlyC
 if (-not (Get-Variable -Name "PrivateEndpointsSubnetPrefix" -ErrorAction SilentlyContinue)) {
     $PrivateEndpointsSubnetPrefix = "10.0.2.0/24"
 }
+if (-not (Get-Variable -Name "AppInsightsName" -ErrorAction SilentlyContinue)) {
+    $AppInsightsName = "demoai-appinsights"
+}
 
 # Set defaults for optional secrets (empty strings)
 if (-not (Get-Variable -Name "EntraFrontendClientId" -ErrorAction SilentlyContinue)) {
@@ -778,6 +781,31 @@ if (-not $CodeOnly) {
     $aiFoundryProjectId = $aiFoundryProjectDetails.id
     Write-Host "AI Foundry Project ID: $aiFoundryProjectId" -ForegroundColor Cyan
     
+    # Link Application Insights to AI Foundry for monitoring (diagnostic settings)
+    if ($appInsightsResourceId) {
+        Write-Host "Configuring AI Foundry monitoring with Application Insights..." -ForegroundColor Green
+        
+        # Create diagnostic settings on the AI Foundry account to send telemetry to App Insights
+        $diagSettingsName = "$AiFoundryAccountName-diag"
+        $diagExists = az monitor diagnostic-settings show `
+            --name $diagSettingsName `
+            --resource $aiFoundryProjectId `
+            --query "id" `
+            --output tsv 2>$null
+        
+        if (-not $diagExists) {
+            az monitor diagnostic-settings create `
+                --name $diagSettingsName `
+                --resource $aiFoundryProjectId `
+                --workspace $logAnalyticsWorkspaceName `
+                --logs '[{"categoryGroup":"allLogs","enabled":true}]' `
+                --metrics '[{"category":"AllMetrics","enabled":true}]' 2>$null
+            Write-Host "   ✅ Diagnostic settings configured for AI Foundry project" -ForegroundColor Green
+        } else {
+            Write-Host "   ✅ Diagnostic settings already configured" -ForegroundColor Cyan
+        }
+    }
+
     # Note about agent creation
     Write-Host ""
     Write-Host "📝 AI Foundry Setup Complete:" -ForegroundColor Yellow
@@ -785,6 +813,9 @@ if (-not $CodeOnly) {
     Write-Host "   Endpoint: $aiFoundryEndpoint" -ForegroundColor White
     Write-Host "   Project: $AiFoundryProjectName" -ForegroundColor White
     Write-Host "   Project ID: $aiFoundryProjectId" -ForegroundColor White
+    if ($appInsightsConnectionString) {
+        Write-Host "   App Insights: $AppInsightsName (linked)" -ForegroundColor White
+    }
     Write-Host ""
     Write-Host "   ℹ️  Agent Creation:" -ForegroundColor Cyan
     Write-Host "   Agents are created using the Azure AI SDK or REST API, not Azure CLI." -ForegroundColor White
@@ -1011,6 +1042,49 @@ if (-not $CodeOnly) {
 
     Write-Host "Log Analytics Workspace: $logAnalyticsWorkspaceName" -ForegroundColor Cyan
 
+    # Create Application Insights for end-to-end tracing and monitoring
+    Write-Host ""
+    Write-Host "Checking Application Insights: $AppInsightsName..." -ForegroundColor Green
+    $appInsightsExists = az monitor app-insights component show `
+        --app $AppInsightsName `
+        --resource-group $ResourceGroup `
+        --query "id" `
+        --output tsv 2>$null
+
+    if (-not $appInsightsExists) {
+        Write-Host "Creating Application Insights (linked to Log Analytics workspace)..." -ForegroundColor Yellow
+        az monitor app-insights component create `
+            --app $AppInsightsName `
+            --resource-group $ResourceGroup `
+            --location $Location `
+            --kind web `
+            --application-type web `
+            --workspace $logAnalyticsWorkspaceName | Out-Null
+        Write-Host "   ✅ Application Insights created: $AppInsightsName" -ForegroundColor Green
+    } else {
+        Write-Host "   ✅ Application Insights already exists" -ForegroundColor Cyan
+    }
+
+    # Retrieve connection string and resource ID (needed whether new or existing)
+    $appInsightsConnectionString = az monitor app-insights component show `
+        --app $AppInsightsName `
+        --resource-group $ResourceGroup `
+        --query "connectionString" `
+        --output tsv
+
+    $appInsightsResourceId = az monitor app-insights component show `
+        --app $AppInsightsName `
+        --resource-group $ResourceGroup `
+        --query "id" `
+        --output tsv
+
+    Write-Host "Application Insights: $AppInsightsName" -ForegroundColor Cyan
+    if ($appInsightsConnectionString) {
+        Write-Host "   Connection String: $($appInsightsConnectionString.Substring(0, [Math]::Min(60, $appInsightsConnectionString.Length)))..." -ForegroundColor White
+    } else {
+        Write-Host "   ⚠️  Could not retrieve connection string" -ForegroundColor Yellow
+    }
+
     # Create Container Apps environment with VNet integration and monitoring
     Write-Host ""
     Write-Host "Checking Container Apps environment..." -ForegroundColor Green
@@ -1070,6 +1144,18 @@ if (-not $InfraOnly) {
         if ($CosmosDbAccountName) {
             $cosmosDbUri = "https://$CosmosDbAccountName.documents.azure.com:443/"
             Write-Host "   Cosmos DB URI: $cosmosDbUri" -ForegroundColor Cyan
+        }
+
+        # Retrieve Application Insights connection string if not provided via config
+        if (-not $ApplicationInsightsConnectionString) {
+            $appInsightsConnectionString = az monitor app-insights component show `
+                --app $AppInsightsName `
+                --resource-group $ResourceGroup `
+                --query "connectionString" `
+                --output tsv 2>$null
+            if ($appInsightsConnectionString) {
+                Write-Host "   App Insights: Retrieved connection string from $AppInsightsName" -ForegroundColor Cyan
+            }
         }
     }
 
@@ -1141,6 +1227,16 @@ if (-not $InfraOnly) {
         "AI_FOUNDRY_AGENT_ID=$AiFoundryAgentId"
     )
 
+    # Add Application Insights connection string (auto-detected from infra or config override)
+    # Priority: dynamically created App Insights > config file override
+    $effectiveAppInsightsConnStr = if ($appInsightsConnectionString) { $appInsightsConnectionString } elseif ($ApplicationInsightsConnectionString) { $ApplicationInsightsConnectionString } else { $null }
+    if ($effectiveAppInsightsConnStr) {
+        $backendEnvVars += @(
+            "APPLICATIONINSIGHTS_CONNECTION_STRING=$effectiveAppInsightsConnStr"
+        )
+        Write-Host "   ℹ️  Application Insights connection string configured (fast-path)" -ForegroundColor Cyan
+    }
+
     # Add Power BI environment variables if configured
     if ($PowerBIClientId -and $PowerBIClientSecret -and $PowerBIWorkspaceId -and $PowerBIReportId) {
         # Use provided tenant ID or default to Entra tenant ID
@@ -1180,6 +1276,8 @@ if (-not $InfraOnly) {
         az containerapp update `
             --name $BackendAppName `
             --resource-group $ResourceGroup `
+            --min-replicas $minReplicas `
+            --max-replicas $maxReplicas `
             --image "$ContainerRegistry.azurecr.io/${BackendAppName}:${imageVersion}" `
             --set-env-vars $backendEnvVars
         
@@ -1201,7 +1299,9 @@ if (-not $InfraOnly) {
             --env-vars $backendEnvVars `
             --system-assigned `
             --cpu 0.5 `
-            --memory 1Gi
+            --memory 1Gi `
+            --min-replicas $minReplicas `
+            --max-replicas $maxReplicas 
 
         Write-Host "   ✅ Backend deployed with external ingress (publicly accessible)" -ForegroundColor Green
     }
@@ -1373,6 +1473,8 @@ if (-not $InfraOnly) {
         az containerapp update `
             --name $BackendAppName `
             --resource-group $ResourceGroup `
+            --min-replicas $minReplicas `
+            --max-replicas $maxReplicas `
             --set-env-vars "COPILOT_STUDIO_APP_CLIENT_SECRET=secretref:copilot-studio-secret"
         Write-Host "   ✅ Copilot Studio secret configured" -ForegroundColor Green
     }
@@ -1387,6 +1489,8 @@ if (-not $InfraOnly) {
         az containerapp update `
             --name $BackendAppName `
             --resource-group $ResourceGroup `
+            --min-replicas $minReplicas `
+            --max-replicas $maxReplicas `
             --set-env-vars "AI_FOUNDRY_APP_CLIENT_SECRET=secretref:ai-foundry-secret"
         Write-Host "   ✅ AI Foundry secret configured" -ForegroundColor Green
     }
@@ -1401,6 +1505,8 @@ if (-not $InfraOnly) {
         az containerapp update `
             --name $BackendAppName `
             --resource-group $ResourceGroup `
+            --min-replicas $minReplicas `
+            --max-replicas $maxReplicas `
             --set-env-vars "POWERBI_CLIENT_SECRET=secretref:powerbi-secret"
         Write-Host "   ✅ Power BI secret configured" -ForegroundColor Green
     }
@@ -1488,6 +1594,8 @@ if (-not $InfraOnly) {
         az containerapp update `
             --name $FrontendAppName `
             --resource-group $ResourceGroup `
+            --min-replicas $minReplicas `
+            --max-replicas $maxReplicas `
             --image "$ContainerRegistry.azurecr.io/${FrontendAppName}:${imageVersion}"
         
         Write-Host "   ✅ Frontend updated with new image" -ForegroundColor Green
@@ -1506,7 +1614,9 @@ if (-not $InfraOnly) {
             --registry-identity $managedIdentityId `
             --user-assigned $managedIdentityId `
             --cpu 0.5 `
-            --memory 1Gi
+            --memory 1Gi `
+            --min-replicas $minReplicas `
+            --max-replicas $maxReplicas
 
         Write-Host "   ✅ Frontend deployed with external ingress (publicly accessible)" -ForegroundColor Green
     }
@@ -1600,6 +1710,7 @@ if (-not $CodeOnly) {
     Write-Host "   - Container Registry: $ContainerRegistry.azurecr.io 🔒 Private" -ForegroundColor Cyan
     Write-Host "   - Key Vault: https://$KeyVaultName.vault.azure.net/ 🔒 Private" -ForegroundColor Cyan
     Write-Host "   - Log Analytics Workspace: $logAnalyticsWorkspaceName" -ForegroundColor Cyan
+    Write-Host "   - Application Insights: $AppInsightsName" -ForegroundColor Cyan
     Write-Host "   - Container Apps Environment: $EnvironmentName (VNet-integrated, monitored)" -ForegroundColor Cyan
 }
 
@@ -1690,6 +1801,7 @@ if (-not $CodeOnly) {
     Write-Host "   ✅ Secrets stored securely in Key Vault" -ForegroundColor Green
     Write-Host "   ✅ Private DNS zones for name resolution" -ForegroundColor Green
     Write-Host "   ✅ Log Analytics workspace enabled for monitoring" -ForegroundColor Green
+    Write-Host "   ✅ Application Insights enabled for tracing" -ForegroundColor Green
     Write-Host ""
     Write-Host "🌐 Network Architecture:" -ForegroundColor Yellow
     Write-Host "   VNet: $VNetAddressPrefix" -ForegroundColor Cyan

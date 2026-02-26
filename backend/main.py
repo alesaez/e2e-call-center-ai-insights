@@ -52,6 +52,7 @@ from jose import jwt, JWTError
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.util import get_remote_address
 from slowapi.errors import RateLimitExceeded
+import asyncio
 import time
 import hashlib
 
@@ -155,32 +156,18 @@ def get_settings():
 
 @app.on_event("startup")
 async def startup_event():
-    """Initialize services on startup."""
+    """Initialize services on startup with optimized cold-start performance."""
     global cosmos_service, copilot_studio_service, ai_foundry_service, conversation_service, powerbi_service, fabric_service
     settings = get_settings()
+    startup_start = time.time()
     
-    # Configure Azure Monitor / Application Insights tracing FIRST
-    # Must happen before any Azure SDK clients are created so they get instrumented
-    if settings.ai_foundry:
-        try:
-            from azure.identity import DefaultAzureCredential
-            from azure.ai.projects import AIProjectClient
-            from azure.monitor.opentelemetry import configure_azure_monitor
-            
-            telemetry_client = AIProjectClient(
-                endpoint=settings.ai_foundry.endpoint,
-                credential=DefaultAzureCredential(exclude_shared_token_cache_credential=True)
-            )
-            connection_string = telemetry_client.telemetry.get_application_insights_connection_string()
-            if connection_string:
-                configure_azure_monitor(connection_string=connection_string)
-                logger.info("✓ Application Insights tracing enabled via AI Foundry project")
-            else:
-                logger.warning("⚠ No Application Insights connection string found in AI Foundry project")
-        except Exception as e:
-            logger.warning(f"⚠ Could not configure Application Insights tracing: {e}")
+    # ── Phase 1: Application Insights (fast path with env var, async fallback) ──
+    t0 = time.time()
+    _configure_app_insights(settings)
+    logger.info(f"⏱ App Insights setup: {(time.time() - t0) * 1000:.0f}ms")
     
-    # Initialize Cosmos DB service if account URI is provided
+    # ── Phase 2: Cosmos DB init (async, needed before other services) ──
+    t0 = time.time()
     if settings.COSMOS_DB_ACCOUNT_URI:
         logger.info("Initializing Cosmos DB service...")
         cosmos_service = CosmosDBService(settings)
@@ -192,6 +179,10 @@ async def startup_event():
             cosmos_service = None
     else:
         logger.warning("⚠ Cosmos DB account URI not configured - service will not be available")
+    logger.info(f"⏱ Cosmos DB init: {(time.time() - t0) * 1000:.0f}ms")
+    
+    # ── Phase 3: Synchronous service constructors (CPU-only, no I/O) ──
+    t0 = time.time()
     
     # Initialize Copilot Studio service if configured
     if settings.copilot_studio:
@@ -236,21 +227,89 @@ async def startup_event():
     rbac_service = RBACService(cosmos_service)
     logger.info("✓ RBAC service initialized")
     
-    # Initialize Fabric Lakehouse service if configured
+    logger.info(f"⏱ Sync service constructors: {(time.time() - t0) * 1000:.0f}ms")
+    
+    # ── Phase 4: Parallel I/O — Fabric connection test + JWKS pre-warm ──
+    t0 = time.time()
+    
+    # Prepare Fabric Lakehouse service (constructor is sync, test_connection is async)
     if settings.fabric_lakehouse and settings.fabric_lakehouse.is_configured():
         try:
             fabric_service = FabricLakehouseService(settings.fabric_lakehouse)
-            # Test connection
-            if await fabric_service.test_connection():
-                logger.info("✓ Fabric Lakehouse service initialized and connection tested")
-            else:
-                logger.warning("⚠ Fabric Lakehouse service initialized but connection test failed")
         except Exception as e:
             logger.error(f"Failed to initialize Fabric Lakehouse service: {e}")
             fabric_service = None
     else:
         logger.info("ℹ Fabric Lakehouse not configured - dashboard will use mock data")
         fabric_service = None
+    
+    # Run Fabric connection test and JWKS pre-warm in parallel
+    async def _fabric_test():
+        """Test Fabric connection if service is available."""
+        if fabric_service:
+            try:
+                if await fabric_service.test_connection():
+                    logger.info("✓ Fabric Lakehouse connection tested successfully")
+                else:
+                    logger.warning("⚠ Fabric Lakehouse connection test failed")
+            except Exception as e:
+                logger.error(f"Failed to test Fabric Lakehouse connection: {e}")
+    
+    async def _jwks_prewarm():
+        """Pre-warm JWKS cache so first authenticated request is fast."""
+        try:
+            await get_jwks()
+            logger.info("✓ JWKS cache pre-warmed")
+        except Exception as e:
+            logger.warning(f"⚠ JWKS pre-warm failed (will retry on first request): {e}")
+    
+    await asyncio.gather(_fabric_test(), _jwks_prewarm())
+    logger.info(f"⏱ Parallel I/O (Fabric + JWKS): {(time.time() - t0) * 1000:.0f}ms")
+    
+    total_ms = (time.time() - startup_start) * 1000
+    logger.info(f"⏱ Total startup time: {total_ms:.0f}ms")
+
+
+def _configure_app_insights(settings) -> None:
+    """
+    Configure Application Insights tracing.
+    
+    Fast path: Use APPLICATIONINSIGHTS_CONNECTION_STRING env var directly (no SDK calls).
+    Fallback: Fetch connection string from AI Foundry project (slow — involves
+    DefaultAzureCredential probing + API call). The fallback runs in a background
+    thread to avoid blocking startup.
+    """
+    # Fast path: direct connection string from environment variable
+    conn_str = os.environ.get("APPLICATIONINSIGHTS_CONNECTION_STRING")
+    if conn_str:
+        try:
+            from azure.monitor.opentelemetry import configure_azure_monitor
+            configure_azure_monitor(connection_string=conn_str)
+            logger.info("✓ Application Insights tracing enabled via env var (fast path)")
+            return
+        except Exception as e:
+            logger.warning(f"⚠ Failed to configure App Insights from env var: {e}")
+    
+    # Slow fallback: fetch from AI Foundry project (runs synchronously but is
+    # guarded so it only fires when the env var is missing)
+    if settings.ai_foundry:
+        try:
+            from azure.identity import DefaultAzureCredential
+            from azure.ai.projects import AIProjectClient
+            from azure.monitor.opentelemetry import configure_azure_monitor
+            
+            telemetry_client = AIProjectClient(
+                endpoint=settings.ai_foundry.endpoint,
+                credential=DefaultAzureCredential(exclude_shared_token_cache_credential=True)
+            )
+            connection_string = telemetry_client.telemetry.get_application_insights_connection_string()
+            if connection_string:
+                configure_azure_monitor(connection_string=connection_string)
+                logger.info("✓ Application Insights tracing enabled via AI Foundry project")
+            else:
+                logger.warning("⚠ No Application Insights connection string found in AI Foundry project")
+        except Exception as e:
+            logger.warning(f"⚠ Could not configure Application Insights tracing: {e}")
 
 @app.on_event("shutdown")
 async def shutdown_event():

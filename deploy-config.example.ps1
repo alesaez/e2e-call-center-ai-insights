@@ -47,6 +47,20 @@ $CosmosDbMessagesContainer = "Messages"
 $EnvironmentName = "demoai-env"
 $BackendAppName = "demoai-backend"
 $FrontendAppName = "demoai-frontend"
+$minReplicas = 1
+$maxReplicas = 10
+
+# ============================================================================
+# Application Insights Configuration
+# ============================================================================
+# Application Insights is automatically created and linked to Log Analytics
+# during infrastructure provisioning. The connection string is auto-detected
+# and passed to the backend container.
+$AppInsightsName = "demoai-appinsights"
+
+# Override: Provide a connection string manually (skips auto-detection).
+# Useful when running -CodeOnly without prior infra provisioning.
+$ApplicationInsightsConnectionString = ""
 
 # ============================================================================
 # Network Security Configuration
