@@ -167,6 +167,9 @@ if ($missingParams.Count -gt 0) {
 
 az config set core.only_show_errors=$true
 
+# Ensure required CLI extensions are installed (non-interactive)
+az extension add --name application-insights --yes 2>$null
+
 # Validate deployment mode
 if ($InfraOnly -and $CodeOnly) {
     Write-Host "Error: Cannot specify both -InfraOnly and -CodeOnly" -ForegroundColor Red
@@ -689,6 +692,86 @@ if (-not $CodeOnly) {
         --public-network-access Disabled
     Write-Host "   ✅ Key Vault secured with private access only" -ForegroundColor Green
 
+    # Create Log Analytics workspace for monitoring
+    Write-Host ""
+    Write-Host "Checking Log Analytics workspace..." -ForegroundColor Green
+    $logAnalyticsWorkspaceName = "$ResourceGroup-logs"
+    
+    # Use list command to check if Log Analytics workspace exists
+    $logAnalyticsExists = az monitor log-analytics workspace list `
+        --resource-group $ResourceGroup `
+        --query "[?name=='$logAnalyticsWorkspaceName'].id | [0]" `
+        --output tsv 2>$null
+    
+    if (-not $logAnalyticsExists) {
+        Write-Host "Creating Log Analytics workspace..." -ForegroundColor Yellow
+        az monitor log-analytics workspace create `
+            --workspace-name $logAnalyticsWorkspaceName `
+            --resource-group $ResourceGroup `
+            --location $Location | Out-Null
+        Write-Host "   ✅ Log Analytics workspace created" -ForegroundColor Green
+    } else {
+        Write-Host "   ✅ Log Analytics workspace already exists" -ForegroundColor Cyan
+    }
+
+    # Get the workspace ID and key (needed whether existing or new)
+    $logAnalyticsId = az monitor log-analytics workspace show `
+        --workspace-name $logAnalyticsWorkspaceName `
+        --resource-group $ResourceGroup `
+        --query "customerId" `
+        --output tsv
+
+    $logAnalyticsKey = az monitor log-analytics workspace get-shared-keys `
+        --workspace-name $logAnalyticsWorkspaceName `
+        --resource-group $ResourceGroup `
+        --query "primarySharedKey" `
+        --output tsv
+
+    Write-Host "Log Analytics Workspace: $logAnalyticsWorkspaceName" -ForegroundColor Cyan
+
+    # Create Application Insights for end-to-end tracing and monitoring
+    Write-Host ""
+    Write-Host "Checking Application Insights: $AppInsightsName..." -ForegroundColor Green
+    $appInsightsExists = az monitor app-insights component show `
+        --app $AppInsightsName `
+        --resource-group $ResourceGroup `
+        --query "id" `
+        --output tsv | Out-Null
+
+    if (-not $appInsightsExists) {
+        Write-Host "Creating Application Insights (linked to Log Analytics workspace)..." -ForegroundColor Yellow
+        az monitor app-insights component create `
+            --app $AppInsightsName `
+            --resource-group $ResourceGroup `
+            --location $Location `
+            --kind web `
+            --application-type web `
+            --workspace $logAnalyticsWorkspaceName | Out-Null
+        Write-Host "   ✅ Application Insights created: $AppInsightsName" -ForegroundColor Green
+    } else {
+        Write-Host "   ✅ Application Insights already exists" -ForegroundColor Cyan
+    }
+
+    # Retrieve connection string and resource ID (needed whether new or existing)
+    $appInsightsConnectionString = az monitor app-insights component show `
+        --app $AppInsightsName `
+        --resource-group $ResourceGroup `
+        --query "connectionString" `
+        --output tsv
+
+    $appInsightsResourceId = az monitor app-insights component show `
+        --app $AppInsightsName `
+        --resource-group $ResourceGroup `
+        --query "id" `
+        --output tsv
+
+    Write-Host "Application Insights: $AppInsightsName" -ForegroundColor Cyan
+    if ($appInsightsConnectionString) {
+        Write-Host "   Connection String: $($appInsightsConnectionString.Substring(0, [Math]::Min(60, $appInsightsConnectionString.Length)))..." -ForegroundColor White
+    } else {
+        Write-Host "   ⚠️  Could not retrieve connection string" -ForegroundColor Yellow
+    }
+
     # Create AI Foundry account (required)
     Write-Host ""
     Write-Host "Checking Azure AI Foundry account..." -ForegroundColor Green
@@ -1003,86 +1086,6 @@ if (-not $CodeOnly) {
         # Get Cosmos DB URI
         $cosmosDbUri = "https://$CosmosDbAccountName.documents.azure.com:443/"
         Write-Host "Cosmos DB URI: $cosmosDbUri" -ForegroundColor Cyan
-    }
-
-    # Create Log Analytics workspace for monitoring
-    Write-Host ""
-    Write-Host "Checking Log Analytics workspace..." -ForegroundColor Green
-    $logAnalyticsWorkspaceName = "$ResourceGroup-logs"
-    
-    # Use list command to check if Log Analytics workspace exists
-    $logAnalyticsExists = az monitor log-analytics workspace list `
-        --resource-group $ResourceGroup `
-        --query "[?name=='$logAnalyticsWorkspaceName'].id | [0]" `
-        --output tsv 2>$null
-    
-    if (-not $logAnalyticsExists) {
-        Write-Host "Creating Log Analytics workspace..." -ForegroundColor Yellow
-        az monitor log-analytics workspace create `
-            --workspace-name $logAnalyticsWorkspaceName `
-            --resource-group $ResourceGroup `
-            --location $Location | Out-Null
-        Write-Host "   ✅ Log Analytics workspace created" -ForegroundColor Green
-    } else {
-        Write-Host "   ✅ Log Analytics workspace already exists" -ForegroundColor Cyan
-    }
-
-    # Get the workspace ID and key (needed whether existing or new)
-    $logAnalyticsId = az monitor log-analytics workspace show `
-        --workspace-name $logAnalyticsWorkspaceName `
-        --resource-group $ResourceGroup `
-        --query "customerId" `
-        --output tsv
-
-    $logAnalyticsKey = az monitor log-analytics workspace get-shared-keys `
-        --workspace-name $logAnalyticsWorkspaceName `
-        --resource-group $ResourceGroup `
-        --query "primarySharedKey" `
-        --output tsv
-
-    Write-Host "Log Analytics Workspace: $logAnalyticsWorkspaceName" -ForegroundColor Cyan
-
-    # Create Application Insights for end-to-end tracing and monitoring
-    Write-Host ""
-    Write-Host "Checking Application Insights: $AppInsightsName..." -ForegroundColor Green
-    $appInsightsExists = az monitor app-insights component show `
-        --app $AppInsightsName `
-        --resource-group $ResourceGroup `
-        --query "id" `
-        --output tsv 2>$null
-
-    if (-not $appInsightsExists) {
-        Write-Host "Creating Application Insights (linked to Log Analytics workspace)..." -ForegroundColor Yellow
-        az monitor app-insights component create `
-            --app $AppInsightsName `
-            --resource-group $ResourceGroup `
-            --location $Location `
-            --kind web `
-            --application-type web `
-            --workspace $logAnalyticsWorkspaceName | Out-Null
-        Write-Host "   ✅ Application Insights created: $AppInsightsName" -ForegroundColor Green
-    } else {
-        Write-Host "   ✅ Application Insights already exists" -ForegroundColor Cyan
-    }
-
-    # Retrieve connection string and resource ID (needed whether new or existing)
-    $appInsightsConnectionString = az monitor app-insights component show `
-        --app $AppInsightsName `
-        --resource-group $ResourceGroup `
-        --query "connectionString" `
-        --output tsv
-
-    $appInsightsResourceId = az monitor app-insights component show `
-        --app $AppInsightsName `
-        --resource-group $ResourceGroup `
-        --query "id" `
-        --output tsv
-
-    Write-Host "Application Insights: $AppInsightsName" -ForegroundColor Cyan
-    if ($appInsightsConnectionString) {
-        Write-Host "   Connection String: $($appInsightsConnectionString.Substring(0, [Math]::Min(60, $appInsightsConnectionString.Length)))..." -ForegroundColor White
-    } else {
-        Write-Host "   ⚠️  Could not retrieve connection string" -ForegroundColor Yellow
     }
 
     # Create Container Apps environment with VNet integration and monitoring
